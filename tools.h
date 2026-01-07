@@ -124,7 +124,7 @@
       TOOLS_ASSERT((da)->data && "get good");                                                                          \
     }                                                                                                                  \
   } while (0)
-#define da_free(da) (TOOLS_FREE((da)->data), (da)->capacity = 0, (da)->size = 0);
+#define da_free(da) ((da)->data ? TOOLS_FREE((da)->data) : 0, (da)->capacity = 0, (da)->size = 0);
 
 #define da_push(da, item)                                                                                              \
   do {                                                                                                                 \
@@ -164,6 +164,7 @@ typedef struct {
 } StringView;
 
 #define sv_at(sv, index) ((sv).data[(index)])
+#define sv_len(sv) ((sv).size)
 
 #define sb_append(sb, c) da_push((sb), (c))
 #define sb_concat(sb, data, n) da_push_n((sb), (data), (n))
@@ -184,6 +185,7 @@ TOOLS_DEF size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill);
 TOOLS_DEF StringView sv_new(char *data, size_t size);
 #define sv_from_parts(data, size) sv_new((data), (size))
 TOOLS_DEF StringView sv_from_cstr(const char *cstr);
+TOOLS_DEF StringView sv_prefix(StringView sv, size_t n);
 #define sv_from_sb(sb) sv_new((sb)->data, (sb)->size)
 #define sb2sv(sb) sv_from_sb(sb)
 #define sv_from_da(da) sv_new((da)->data, (da)->size)
@@ -299,10 +301,16 @@ size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill) {
 }
 StringView sv_new(char *data, size_t size) { return (StringView){.data = data, .size = (size_t)size}; }
 StringView sv_from_cstr(const char *cstr) { return sv_new((char *)cstr, strlen(cstr)); }
+StringView sv_prefix(StringView sv, size_t n) {
+  if (n > sv.size) {
+    n = sv.size;
+  }
+  return sv_new(sv.data, n);
+}
 bool sv_eq(StringView a, StringView b) { return a.size == b.size && (memcmp(a.data, b.data, a.size) == 0); }
 bool sv_starts_with(StringView sv, const char *prefix) {
   StringView prefix_sv = sv_from_cstr(prefix);
-  return sv_eq(prefix_sv, sv_chop_front(&sv, prefix_sv.size));
+  return sv_eq(prefix_sv, sv_prefix(sv, prefix_sv.size));
 }
 bool sv_ends_with(StringView sv, const char *suffix) {
   StringView suffix_sv = sv_from_cstr(suffix);
