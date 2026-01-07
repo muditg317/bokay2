@@ -114,9 +114,10 @@
 
 #define da_reserve(da, cap)                                                                                            \
   do {                                                                                                                 \
-    if ((da)->capacity < (cap)) {                                                                                      \
+    size_t new_cap = (cap);                                                                                            \
+    if ((da)->capacity < new_cap) {                                                                                    \
       (da)->capacity = (da)->capacity <= 0 ? DA_INIT_CAP : (da)->capacity;                                             \
-      while ((da)->capacity < (cap)) {                                                                                 \
+      while ((da)->capacity < new_cap) {                                                                               \
         (da)->capacity *= DA_GROWTH_FACTOR;                                                                            \
       }                                                                                                                \
       (da)->data = TOOLS_REALLOC((da)->data, (da)->capacity * sizeof(*(da)->data));                                    \
@@ -162,6 +163,8 @@ typedef struct {
   SPAN_FIELDS(char)
 } StringView;
 
+#define sv_at(sv, index) ((sv).data[(index)])
+
 #define sb_append(sb, c) da_push((sb), (c))
 #define sb_concat(sb, data, n) da_push_n((sb), (data), (n))
 #define sb_append_sv(sb, sv) sb_concat((sb), (sv).data, (sv).size)
@@ -190,6 +193,7 @@ TOOLS_DEF bool sv_eq(StringView a, StringView b);
 TOOLS_DEF bool sv_starts_with(StringView sv, const char *prefix);
 TOOLS_DEF bool sv_ends_with(StringView sv, const char *suffix);
 
+#define sv_chop_front_ignore(sv, n) span_chop_front((sv), (n))
 TOOLS_DEF StringView sv_chop_front(StringView *sv, size_t n);
 #define sv_chop_left(sv, n) sv_chop_front((sv), (n))
 TOOLS_DEF StringView sv_chop_by_delim(StringView *sv, char delim);
@@ -255,8 +259,9 @@ TOOLS_DEF tools_log_handler tools_default_log_handler;
 
 TOOLS_DEF void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...);
 #define tools_logx(lvl, opts, fmt, ...)                                                                                \
-  tools_log_opt(lvl, ((ToolsLogOpts){.file = __FILE__, .line = __LINE__, DEPAREN(opts)}), (fmt) __VA_OPT__(,) __VA_ARGS__)
-#define tools_log(lvl, fmt, ...) tools_logx(lvl, (), (fmt) __VA_OPT__(,) __VA_ARGS__)
+  tools_log_opt(lvl, ((ToolsLogOpts){.file = __FILE__, .line = __LINE__, DEPAREN(opts)}),                              \
+                (fmt)__VA_OPT__(, ) __VA_ARGS__)
+#define tools_log(lvl, fmt, ...) tools_logx(lvl, (), (fmt)__VA_OPT__(, ) __VA_ARGS__)
 
 // =====================================================
 // ==================== END Logging ====================
@@ -368,7 +373,8 @@ bool read_file(const char *filepath, StringBuilder *sb) {
 
 defer:
   if (!result)
-    tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to read file: %s. Got error: %s\n", filepath, strerror(errno));
+    tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to read file: %s. Got error: %s\n", filepath,
+               strerror(errno));
   if (file)
     fclose(file);
   return result;

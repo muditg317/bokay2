@@ -1,1 +1,3 @@
-Hello, World!
+u8 main() {
+  printf("Hello, World!\n");
+}
