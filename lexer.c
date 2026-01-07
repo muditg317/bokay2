@@ -1,42 +1,22 @@
 #include "tools.h"
 
 enum TokenKind {
-    TK_Unknown,
-    TK_Identifier,
+    TK_Unknown = -1,
+    // 0-255 reserved for single-character tokens
+    TK_Identifier = 256,
     TK_Literal,
-    TK_OParen,
-    TK_CParen,
-    TK_OBracket,
-    TK_CBracket,
-    TK_OCurly,
-    TK_CCurly,
-    TK_Semicolon,
-    TK_Comma,
-    TK_Dot,
-    TK_Plus,
-    TK_Minus,
-    TK_Asterisk,
-    TK_Slash,
 };
 
 const char *token_kind_to_str(enum TokenKind kind) {
+    if (kind >= 0 && kind <= 255) {
+        static char buf[4] = {'\'', 0, '\'', 0};
+        buf[1] = (char)kind;
+        return buf;
+    }
     switch (kind) {
         case TK_Unknown: return "Unknown";
         case TK_Identifier: return "Identifier";
         case TK_Literal: return "Literal";
-        case TK_OParen: return "OParen";
-        case TK_CParen: return "CParen";
-        case TK_OBracket: return "OBracket";
-        case TK_CBracket: return "CBracket";
-        case TK_OCurly: return "OCurly";
-        case TK_CCurly: return "CCurly";
-        case TK_Semicolon: return "Semicolon";
-        case TK_Comma: return "Comma";
-        case TK_Dot: return "Dot";
-        case TK_Plus: return "Plus";
-        case TK_Minus: return "Minus";
-        case TK_Asterisk: return "Asterisk";
-        case TK_Slash: return "Slash";
         default: TOOLS_UNREACHABLE("Unknown token kind");;
     }
 }
@@ -84,51 +64,33 @@ bool lexer_next_token(Lexer *l) {
     }
 
     char c = l->source.data[0];
-    size_t tok_len = 1;
     Token *token = &l->token;
-    token->kind = TK_Unknown;
+    token->kind = c; // Default to single-character token
     token->loc = l->lex_loc;
+    size_t tok_len = 1;
 
-    // Simple single-character tokens
-    switch (c) {
-        case '(': token->kind = TK_OParen; break;
-        case ')': token->kind = TK_CParen; break;
-        case '[': token->kind = TK_OBracket; break;
-        case ']': token->kind = TK_CBracket; break;
-        case '{': token->kind = TK_OCurly; break;
-        case '}': token->kind = TK_CCurly; break;
-        case ';': token->kind = TK_Semicolon; break;
-        case ',': token->kind = TK_Comma; break;
-        case '.': token->kind = TK_Dot; break;
-        case '+': token->kind = TK_Plus; break;
-        case '-': token->kind = TK_Minus; break;
-        case '*': token->kind = TK_Asterisk; break;
-        case '/': token->kind = TK_Slash; break;
-        default:
-            if (isalpha(c) || c == '_') {
-                token->kind = TK_Identifier;
-                // Consume identifier characters
-                while (tok_len < l->source.size) {
-                    char nc = l->source.data[tok_len];
-                    if (isalnum(nc) || nc == '_') {
-                        tok_len++;
-                    } else {
-                        break;
-                    }
-                }
-            } else if (isdigit(c)) {
-                token->kind = TK_Literal;
-                // Consume numeric literal characters
-                while (tok_len < l->source.size) {
-                    char nc = l->source.data[tok_len];
-                    if (isdigit(nc)) {
-                        tok_len++;
-                    } else {
-                        break;
-                    }
-                }
+    if (isalpha(c) || c == '_') {
+        token->kind = TK_Identifier;
+        // Consume identifier characters
+        while (tok_len < l->source.size) {
+            char nc = l->source.data[tok_len];
+            if (isalnum(nc) || nc == '_') {
+                tok_len++;
+            } else {
+                break;
             }
-            break;
+        }
+    } else if (isdigit(c)) {
+        token->kind = TK_Literal;
+        // Consume numeric literal characters
+        while (tok_len < l->source.size) {
+            char nc = l->source.data[tok_len];
+            if (isdigit(nc)) {
+                tok_len++;
+            } else {
+                break;
+            }
+        }
     }
 
     token->text = sv_chop_front(&l->source, tok_len);
