@@ -8,9 +8,10 @@
 int main(int argc, char **argv) {
     const char *program_name = shift(argv, argc);
     if (argc < 1) {
-        printf("Usage: %s <source-file>\n", program_name);
+        log(ERROR, "Usage: %s <source-file>", program_name);
         return 1;
     }
+    log(INFO, "Starting lexer");
     const char *filepath = shift(argv, argc);
     StringBuilder sb = {0};
     if (!read_file(filepath, &sb)) return 1;
@@ -22,7 +23,7 @@ int main(int argc, char **argv) {
     Token t;
     while (lexer_next_token(&l)) {
         t = l.token;
-        printf(TOK_LOC_Fmt": [%s] "SV_Fmt"\n", TOK_LOC_Arg(filepath, t.loc), token_kind_to_str(t.kind), SV_Arg(t.text));
+        log(INFO, TOK_LOC_Fmt": [%s] "SV_Fmt, TOK_LOC_Arg(filepath, t.loc), token_kind_to_str(t.kind), SV_Arg(t.text));
         // Process token t
     }
 

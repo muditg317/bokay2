@@ -16,7 +16,6 @@
 #include <stdio.h>
 #include <string.h>
 
-
 // =====================================================
 // ================= Replaceable macros ================
 // =====================================================
@@ -63,6 +62,12 @@
 #define TOOLS_COMBINE1(X, Y) X##Y
 #define TOOLS_COMBINE(X, Y) TOOLS_COMBINE1(X, Y)
 #define TOOLS_UNIQUE_VAR(prefix) TOOLS_COMBINE(prefix, TOOLS_COMBINE(_, __LINE__))
+
+#define DEPAREN(...) ESC(ISH __VA_ARGS__)
+#define ISH(...) ISH __VA_ARGS__
+#define ESC(...) ESC_(__VA_ARGS__)
+#define ESC_(...) VAN##__VA_ARGS__
+#define VANISH
 
 // Expression value will be the shifted value
 #define shift(ptr, size) (TOOLS_ASSERT((size) > 0 && "shift on empty array"), (size)--, *(ptr)++)
@@ -227,6 +232,36 @@ TOOLS_DEF bool write_file(const char *filepath, char *data, size_t size);
 // ================== END Files / IO ===================
 // =====================================================
 
+// =====================================================
+// ====================== Logging ======================
+// =====================================================
+
+typedef enum { TOOLS_TRACE, TOOLS_DEBUG, TOOLS_INFO, TOOLS_WARN, TOOLS_ERROR, TOOLS_NO_LOGS } ToolsLogLevel;
+typedef struct {
+  const char *prefix;
+  const char *debug_label;
+  bool omit_log_location;
+  const char *file;
+  int line;
+} ToolsLogOpts;
+
+typedef void(tools_log_handler)(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, va_list args);
+
+TOOLS_DEF void tools_set_log_handler(tools_log_handler *handler);
+TOOLS_DEF tools_log_handler *tools_get_log_handler(void);
+
+extern ToolsLogLevel tools_logging_min_log_level;
+TOOLS_DEF tools_log_handler tools_default_log_handler;
+
+TOOLS_DEF void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...);
+#define tools_logx(lvl, opts, fmt, ...)                                                                                \
+  tools_log_opt(lvl, ((ToolsLogOpts){.file = __FILE__, .line = __LINE__, DEPAREN(opts)}), (fmt) __VA_OPT__(,) __VA_ARGS__)
+#define tools_log(lvl, fmt, ...) tools_logx(lvl, (), (fmt) __VA_OPT__(,) __VA_ARGS__)
+
+// =====================================================
+// ==================== END Logging ====================
+// =====================================================
+
 #endif // TOOLS_H_
 
 #ifdef TOOLS_IMPLEMENTATION
@@ -333,7 +368,7 @@ bool read_file(const char *filepath, StringBuilder *sb) {
 
 defer:
   if (!result)
-    printf("Failed to read file: %s. Got error: %s\n", filepath, strerror(errno));
+    tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to read file: %s. Got error: %s\n", filepath, strerror(errno));
   if (file)
     fclose(file);
   return result;
@@ -351,10 +386,98 @@ bool write_file(const char *filepath, char *data, size_t size) {
 
 defer:
   if (!result)
-    printf("Failed to write file: %s. Got error: %s\n", filepath, strerror(errno));
+    tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to write file: %s. Got error: %s\n", filepath,
+               strerror(errno));
   if (file)
     fclose(file);
   return result;
 }
 
+static tools_log_handler *tools__log_handler = &tools_default_log_handler;
+void tools_set_log_handler(tools_log_handler *handler) { tools__log_handler = handler; }
+tools_log_handler *tools_get_log_handler(void) { return tools__log_handler; }
+
+ToolsLogLevel tools_logging_min_log_level = TOOLS_INFO;
+char *tools_logging_debug_label = "ALL";
+void tools_default_log_handler(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, va_list args) {
+  if (level < tools_logging_min_log_level) {
+    return;
+  }
+
+  if (level == TOOLS_DEBUG && tools_logging_debug_label != NULL && opts.debug_label != NULL &&
+      strcmp(tools_logging_debug_label, "ALL") != 0 && strcmp(tools_logging_debug_label, opts.debug_label) != 0) {
+    return;
+  }
+
+  switch (level) {
+  case TOOLS_TRACE:
+    fprintf(stderr, "[TRACE] ");
+  case TOOLS_DEBUG:
+    fprintf(stderr, "[DEBUG] ");
+    break;
+  case TOOLS_INFO:
+    fprintf(stderr, "[INFO]  ");
+    break;
+  case TOOLS_WARN:
+    fprintf(stderr, "[WARN]  ");
+    break;
+  case TOOLS_ERROR:
+    fprintf(stderr, "[ERROR] ");
+    break;
+  case TOOLS_NO_LOGS:
+    return;
+  }
+
+  if (!opts.omit_log_location) {
+    char *fname = opts.file ? (char *)opts.file : "unknown_file";
+    if (strlen(fname) > 20) {
+      fname += strlen(fname) - 20;
+    }
+    fprintf(stderr, "[%s:%-4d] ", fname, opts.line);
+  }
+
+  if (opts.prefix) {
+    fprintf(stderr, "[%s] ", opts.prefix);
+  }
+
+  vfprintf(stderr, fmt, args);
+  fprintf(stderr, "\n");
+}
+
+void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  tools__log_handler(level, opts, fmt, args);
+  va_end(args);
+}
+
 #endif // TOOLS_IMPLEMENTATION
+
+#ifndef TOOLS_STRIP_PREFIX_GUARD_
+#define TOOLS_STRIP_PREFIX_GUARD_
+
+#ifndef TOOLS_DONT_STRIP_PREFIXES
+#define UNUSED TOOLS_UNUSED
+#define TODO TOOLS_TODO
+#define UNREACHABLE TOOLS_UNREACHABLE
+#define ARRAY_LEN TOOLS_ARRAY_LEN
+#define ARRAY_GET TOOLS_ARRAY_GET
+#define COMBINE TOOLS_COMBINE
+#define UNIQUE_VAR TOOLS_UNIQUE_VAR
+#define LogLevel ToolsLogLevel
+#define TRACE TOOLS_TRACE
+#define DEBUG TOOLS_DEBUG
+#define INFO TOOLS_INFO
+#define WARN TOOLS_WARN
+#define ERROR TOOLS_ERROR
+#define NO_LOGS TOOLS_NO_LOGS
+#define LogOpts ToolsLogOpts
+#define log_handler tools_log_handler
+#define set_log_handler tools_set_log_handler
+#define default_log_handler tools_default_log_handler
+#define log_opt tools_log_opt
+#define logx tools_logx
+#define log tools_log
+#endif // TOOLS_DONT_STRIP_PREFIXES
+
+#endif // TOOLS_STRIP_PREFIX_GUARD_
