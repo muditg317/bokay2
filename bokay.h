@@ -41,7 +41,7 @@ bool bokay_new_opt(BokayEngine *b, BokayNewOpts opts);
 bool bokay_interpret(BokayEngine *b);
 
 bool bokay__eval_expr(Expr e, Value *v);
-bool bokay__eval_printf(ExprPrintf ex_printf);
+// bool bokay__eval_printf(ExprPrintf ex_printf);
 
 #endif // BOKAY_H_
 
@@ -51,8 +51,7 @@ bool bokay_new_opt(BokayEngine *b, BokayNewOpts opts) {
   memset(b, 0, sizeof(*b));
   if (opts.filepath) {
     StringBuilder sb = {0};
-    if (!read_file(opts.filepath, &sb))
-      return false;
+    if (!read_file(opts.filepath, &sb)) return false;
     opts.source_sv = sb2sv(sb);
   } else if (opts.src) {
     opts.source_sv = sv_new(opts.src, opts.src_len);
@@ -65,29 +64,18 @@ bool bokay_new_opt(BokayEngine *b, BokayNewOpts opts) {
 bool bokay__eval_expr(Expr e, Value *v) {
   v->kind = VK_Void;
   switch (e.kind) {
-  case Expr_Error:
-    return false;
-  case Expr_Literal:
+  case EK_Error: return false;
+  case EK_Literal:
     v->kind = literal_kind_to_value_kind[e.as.literal.kind];
     switch (v->kind) {
-    case VK_Integer:
-      v->lit_int = e.as.literal.lit_int;
-      break;
-    case VK_Float:
-      v->lit_float = e.as.literal.lit_float;
-      break;
-    case VK_Char:
-      v->lit_char = e.as.literal.lit_char;
-      break;
-    case VK_String:
-      v->lit_string = sb2sv(e.as.literal.lit_string);
-      break;
-    default:
-      UNREACHABLE("ValueKind should only be literal here");
+    case VK_Integer: v->lit_int = e.as.literal.lit_int; break;
+    case VK_Float: v->lit_float = e.as.literal.lit_float; break;
+    case VK_Char: v->lit_char = e.as.literal.lit_char; break;
+    case VK_String: v->lit_string = sb2sv(e.as.literal.lit_string); break;
+    default: UNREACHABLE("ValueKind should only be literal here");
     }
     return true;
-  case Expr_Printf:
-    return bokay__eval_printf(e.as.printf);
+    // case EK_Printf: return bokay__eval_printf(e.as.printf);
   }
   // return true;
 }
@@ -133,8 +121,7 @@ bool bokay__eval_printf(ExprPrintf ex_printf) {
       argPack.args[pack_idx++] = *(uint32_t *)(&lower);
       argPack.args[pack_idx++] = *(uint32_t *)(&upper);
       break;
-    default:
-      UNREACHABLE("TokenKind expected literal only");
+    default: UNREACHABLE("TokenKind expected literal only");
     }
   }
   if (ex_printf.size) {

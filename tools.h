@@ -306,6 +306,7 @@ size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill) {
 }
 StringView sv_new(char *data, size_t size) { return (StringView){.data = data, .size = (size_t)size}; }
 StringView sv_from_cstr(const char *cstr) { return sv_new((char *)cstr, strlen(cstr)); }
+#define sv_from_cstr_lit(cstr) ((StringView){.data = (char *)(cstr), .size = (ARRAY_LEN((cstr)) - 1)})
 StringView sv_prefix(StringView sv, size_t n) {
   if (n > sv.size) {
     n = sv.size;
