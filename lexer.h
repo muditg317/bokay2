@@ -12,7 +12,8 @@ typedef enum TokenKind {
   TK_Ident,
 
   TK_LITERAL_MIN,
-  TK_Literal_Integer = TK_LITERAL_MIN,
+  TK_Literal_Bool = TK_LITERAL_MIN,
+  TK_Literal_Integer,
   TK_Literal_Float,
   TK_Literal_Char,
   TK_Literal_StringSQ, // Single-quoted string
@@ -50,8 +51,10 @@ typedef enum TokenKind {
   TK_KEYWORD_MIN,
   TK_Kw_Return = TK_KEYWORD_MIN,
   TK_Kw_Type,
+  TK_Kw_Mutable,
+  TK_Kw_Constant,
   TK_Kw_Func,
-  TK_KEYWORD_MAX = TK_Kw_Type,
+  TK_KEYWORD_MAX = TK_Kw_Func,
 
   TK_COUNT
 } TokenKind;
@@ -60,6 +63,7 @@ const TokenKind TK_Literal_AnyString[2] = {
   TK_Literal_StringSQ, TK_Literal_StringDQ
 };
 const TokenKind TK_Literal_Any[TK_LITERAL_MAX-TK_LITERAL_MIN+1] = {
+  [-TK_LITERAL_MIN+TK_Literal_Bool] = TK_Literal_Bool,
   [-TK_LITERAL_MIN+TK_Literal_Integer] = TK_Literal_Integer,
   [-TK_LITERAL_MIN+TK_Literal_Float] = TK_Literal_Float,
   [-TK_LITERAL_MIN+TK_Literal_Char] = TK_Literal_Char,
@@ -85,10 +89,12 @@ const char *puncts[TK_PUNCT_MAX - TK_PUNCT_MIN + 1] = {
 const char *keywords[TK_KEYWORD_MAX - TK_KEYWORD_MIN + 1] = {
     [-TK_KEYWORD_MIN + TK_Kw_Return] = "return",
     [-TK_KEYWORD_MIN + TK_Kw_Type] = "type",
+    [-TK_KEYWORD_MIN + TK_Kw_Mutable] = "mut",
+    [-TK_KEYWORD_MIN + TK_Kw_Constant] = "const",
     [-TK_KEYWORD_MIN + TK_Kw_Func] = "func",
 };
 
-static_assert(TK_COUNT == 255 + 34, "TokenKind enum changed");
+static_assert(TK_COUNT == 255 + 39, "TokenKind enum changed");
 const char *token_kind_to_str(TokenKind kind) {
   if (kind >= 0 && kind <= 255) {
     static char buf[4] = {'\'', 0, '\'', 0};
@@ -97,6 +103,8 @@ const char *token_kind_to_str(TokenKind kind) {
   }
   if (kind >= TK_LITERAL_MIN && kind <= TK_LITERAL_MAX) {
     switch (kind) {
+    case TK_Literal_Bool:
+      return "TK_Literal_Bool";
     case TK_Literal_Integer:
       return "TK_Literal_Integer";
     case TK_Literal_Float:
@@ -144,10 +152,11 @@ typedef struct Token {
   LexLoc loc;
   StringView text;
 
-  size_t int_value;
-  double float_value;
-  char char_value;
-  StringBuilder string_value;
+  bool lit_bool;
+  size_t lit_int;
+  double lit_float;
+  char lit_char;
+  StringBuilder lit_string;
 } Token;
 
 void token_reset(Token *t);
@@ -221,21 +230,18 @@ bool lexer__is_ident(char c) { return isalnum(c) || c == '_'; }
 
 #ifdef LEXER_IMPLEMENTATION
 
-void token_reset(Token *t) { sb_free(&t->string_value); memset(t, 0, sizeof(*t)); }
-bool token_is(Token t, TokenKind tk) {return token_is_oneof(t, &tk, 1);}
+void token_reset(Token *t) { sb_free(&t->lit_string); memset(t, 0, sizeof(*t)); }
+bool token_is(Token t, TokenKind tk) { return token_is_oneof(t, &tk, 1); }
 bool token_is_oneof(Token t, const TokenKind *tks, size_t tk_count) {
   for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
-    if (t.kind == *tk) {
-      return true;
-    }
+    if (t.kind == *tk) return true;
   }
   return false;
 }
 
 Lexer lexer_new_opt(StringView source, LexerOpts opts) {
-  if (!opts.filepath) {
-    opts.filepath = "unknown_file";
-  }
+  if (!opts.filepath) opts.filepath = "unknown_file";
+
   return (Lexer){
       .opts = opts,
       .source = source,
@@ -338,7 +344,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
   // Numeric literals
   if (isdigit(c)) {
     t->kind = TK_Literal_Integer;
-    t->int_value = c-'0';
+    t->lit_int = c-'0';
     size_t mantissa = 0;
     size_t mantisa_div = 1;
     // Consume numeric literal characters
@@ -347,7 +353,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
       if (isdigit(nc)) {
         tok_len++;
         if (t->kind == TK_Literal_Integer) {
-          t->int_value = t->int_value*10 + nc-'0';
+          t->lit_int = t->lit_int*10 + nc-'0';
         } else {
           mantissa = mantissa*10 + nc-'0';
           mantisa_div *= 10;
@@ -369,8 +375,8 @@ bool lexer_get_token(Lexer *l, Token *t) {
       }
     }
     if (t->kind == TK_Literal_Float) {
-      t->float_value = t->int_value + (double)mantissa/mantisa_div;
-      t->int_value = 0;
+      t->lit_float = t->lit_int + (double)mantissa/mantisa_div;
+      t->lit_int = 0;
     }
   }
 
@@ -386,10 +392,20 @@ bool lexer_get_token(Lexer *l, Token *t) {
         break;
       }
     }
+    // Check for true/false literals
+    if (sv_eq_cstr(sv_prefix(l->source, tok_len), "true")) {
+      t->kind = TK_Literal_Bool;
+      t->lit_bool = true;
+      goto finish_token;
+    }
+    if (sv_eq_cstr(sv_prefix(l->source, tok_len), "false")) {
+      t->kind = TK_Literal_Bool;
+      t->lit_bool = false;
+      goto finish_token;
+    }
     // Check if identifier is a keyword
     for (size_t tk_keyword = 0; tk_keyword < TK_KEYWORD_MAX - TK_KEYWORD_MIN + 1; ++tk_keyword) {
-      const char *keyword = keywords[tk_keyword];
-      if (sv_eq(sv_prefix(l->source, strlen(keyword)), sv_from_cstr(keyword))) {
+      if (sv_eq_cstr(sv_prefix(l->source, tok_len), keywords[tk_keyword])) {
         t->kind = (TokenKind)(TK_KEYWORD_MIN + tk_keyword);
         break;
       }
@@ -405,7 +421,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
     if (is_char_literal) {
       t->kind = TK_Literal_Char;
       tok_len = 3; // 'c'
-      t->char_value = sv_at(l->source, 1);
+      t->lit_char = sv_at(l->source, 1);
       goto finish_token;
     }
     t->kind = quote_char == '"' ? TK_Literal_StringDQ : TK_Literal_StringSQ;
@@ -420,25 +436,25 @@ bool lexer_get_token(Lexer *l, Token *t) {
         endLoc.column += 2;
         switch (sv_at(l->source, tok_len - 1)) {
         case 'n':
-          sb_append(&t->string_value, '\n');
+          sb_append(&t->lit_string, '\n');
           break;
         case 't':
-          sb_append(&t->string_value, '\t');
+          sb_append(&t->lit_string, '\t');
           break;
         case 'r':
-          sb_append(&t->string_value, '\r');
+          sb_append(&t->lit_string, '\r');
           break;
         case '\\':
-          sb_append(&t->string_value, '\\');
+          sb_append(&t->lit_string, '\\');
           break;
         case '\'':
-          sb_append(&t->string_value, '\'');
+          sb_append(&t->lit_string, '\'');
           break;
         case '"':
-          sb_append(&t->string_value, '"');
+          sb_append(&t->lit_string, '"');
           break;
         default:
-          sb_append(&t->string_value, sv_at(l->source, tok_len - 1));
+          sb_append(&t->lit_string, sv_at(l->source, tok_len - 1));
           break;
         }
       } else if (nc == quote_char) {
@@ -452,7 +468,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
           endLoc.line++;
           endLoc.column = 1;
         }
-        sb_append(&t->string_value, nc);
+        sb_append(&t->lit_string, nc);
         tok_len++;
       }
     }
@@ -477,13 +493,13 @@ bool lexer_expect(Lexer *l, Token t, TokenKind tk) { return lexer_expect_oneof(l
 bool lexer_expect_oneof(Lexer *l, Token t, const TokenKind *tks, size_t tk_count) {
   if (token_is_oneof(t, tks, tk_count)) return true;
 
-  lexer__start_error(l, t.loc, "Expected ");
+  lexer__start_error(l, t.loc, "Expected one of {");
   for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
     lexer__continue_error(l, "%s", token_kind_to_str(*tk));
     if (tk + 1 < tks + tk_count)
       lexer__continue_error(l, " or ");
   }
-  lexer__finish_error(l, ", but got %s", token_kind_to_str(t.kind));
+  lexer__finish_error(l, "}, but got %s", token_kind_to_str(t.kind));
   return false;
 }
 

@@ -12,10 +12,11 @@ typedef enum ValueKind { VK_Void, VK_Integer, VK_Float, VK_Char, VK_String, VK_C
 typedef struct ExprValue {
   ValueKind kind;
 
-  size_t int_value;
-  double float_value;
-  char char_value;
-  StringView string_value;
+  bool lit_bool;
+  size_t lit_int;
+  double lit_float;
+  char lit_char;
+  StringView lit_string;
 } Value;
 
 ValueKind literal_kind_to_value_kind[TK_COUNT] = {
@@ -70,16 +71,16 @@ bool bokay__eval_expr(Expr e, Value *v) {
     v->kind = literal_kind_to_value_kind[e.as.literal.kind];
     switch (v->kind) {
     case VK_Integer:
-      v->int_value = e.as.literal.int_value;
+      v->lit_int = e.as.literal.lit_int;
       break;
     case VK_Float:
-      v->float_value = e.as.literal.float_value;
+      v->lit_float = e.as.literal.lit_float;
       break;
     case VK_Char:
-      v->char_value = e.as.literal.char_value;
+      v->lit_char = e.as.literal.lit_char;
       break;
     case VK_String:
-      v->string_value = sb2sv(e.as.literal.string_value);
+      v->lit_string = sb2sv(e.as.literal.lit_string);
       break;
     default:
       UNREACHABLE("ValueKind should only be literal here");
@@ -106,27 +107,27 @@ bool bokay__eval_printf(ExprPrintf ex_printf) {
     size_t value, lower, upper;
     switch (arg->kind) {
     case TK_Literal_Integer:
-      value = arg->int_value;
+      value = arg->lit_int;
       lower = (value & (~0UL >> 32));
       upper = (value >> 32);
       argPack.args[pack_idx++] = *(uint32_t *)(&lower);
       argPack.args[pack_idx++] = *(uint32_t *)(&upper);
       break;
     case TK_Literal_Float:
-      value = *(size_t *)&arg->float_value;
+      value = *(size_t *)&arg->lit_float;
       lower = (value & (~0UL >> 32));
       upper = (value >> 32);
       argPack.args[pack_idx++] = *(uint32_t *)(&lower);
       argPack.args[pack_idx++] = *(uint32_t *)(&upper);
       break;
     case TK_Literal_Char:
-      // sb_appendf(&sb, "\'%c\'", arg->char_value);
-      argPack.args[pack_idx++] = *(uint32_t *)(&arg->char_value);
+      // sb_appendf(&sb, "\'%c\'", arg->lit_char);
+      argPack.args[pack_idx++] = *(uint32_t *)(&arg->lit_char);
       argPack.args[pack_idx++] = 0;
       break;
     case TK_Literal_StringSQ: // fallthrough
     case TK_Literal_StringDQ:
-      value = *(size_t *)&arg->string_value.data;
+      value = *(size_t *)&arg->lit_string.data;
       lower = (value & (~0UL >> 32));
       upper = (value >> 32);
       argPack.args[pack_idx++] = *(uint32_t *)(&lower);

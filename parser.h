@@ -41,6 +41,8 @@ struct Type {
     DA_FIELDS(char *)
   } aliases;
 
+  bool mutable;
+
   Type *ptr_to;
   struct {
     DA_FIELDS(Type *)
@@ -84,8 +86,9 @@ typedef enum {
   Expr_Deref,
   Expr_Addr,
   Expr_Assignment,
-  Expr_TypeName,
+  Expr_Definition,
   Expr_FuncCall,
+  Expr_TypeDef,
   Expr_Block,
 
   Expr_COUNT
@@ -116,12 +119,15 @@ typedef struct ExprAddr {
 typedef struct ExprAssignment {
 
 } ExprAssignment;
-typedef struct ExprTypeName {
+typedef struct ExprDefinition {
 
-} ExprTypeName;
+} ExprDefinition;
 typedef struct ExprFuncCall {
 
 } ExprFuncCall;
+typedef struct ExprTypeDef {
+
+} ExprTypeDef;
 typedef struct ExprBlock {
   Variables expectedInScope;
 } ExprBlock;
@@ -139,7 +145,7 @@ typedef struct Expr {
     ExprDeref deref;
     ExprAddr addr;
     ExprAssignment assign;
-    ExprTypeName type_name;
+    ExprDefinition definition;
     ExprFuncCall funcall;
     ExprBlock block;
   } as;
@@ -166,11 +172,16 @@ typedef struct Program {
 void expr_reset(Expr *e);
 
 typedef struct ParserOpts {
-
+  Type *type_defs;
+  size_t type_defs_count;
 } ParserOpts;
 typedef struct Parser {
   ParserOpts opts;
   Lexer *l;
+
+  struct {
+    DA_FIELDS(Type)
+  } type_defs;
 
   StringBuilder error;
 } Parser;
@@ -180,6 +191,8 @@ Parser parser_new_opt(Lexer *l, ParserOpts opts);
 
 bool parser_get_program(Parser *p, Program *prog);
 
+bool parser_compile_top_level_expr(Parser *p, Expr *e);
+
 bool parser_get_expression(Parser *p, Expr *e);
 
 void parser_log_errors(Parser *p);
@@ -188,71 +201,58 @@ void parser_diag_remaining_exprs(Parser *p);
 #define parser_diag_expr(level, p, e)                                                                                  \
   log(level, LEX_LOC_Fmt ": [%s] ", LEX_LOC_Arg((e).loc), expr_kind_to_str((e).kind))
 
+#define parser__fwd_lex_errorf(p, fmt, ...)                                                                            \
+  lexer_errorf((p), SB_Fmt fmt, SB_Arg((p)->l->error) __VA_OPT__(, ) __VA_ARGS__)
+
 #endif // PARSER_H_
 
 #ifdef PARSER_IMPLEMENTATION
 
 const char *type_kind_to_str(TypeKind tk) {
   switch (tk) {
-  case Type_Void:
-    return "Type_Void";
-  case Type_IntegerUnsigned:
-    return "Type_IntegerUnsigned";
-  case Type_IntegerSigned:
-    return "Type_IntegerSigned";
-  case Type_Float:
-    return "Type_Float";
-  case Type_Ptr:
-    return "Type_Ptr";
-  case Type_Array:
-    return "Type_Array";
-  case Type_Struct:
-    return "Type_Struct";
-  case Type_Union:
-    return "Type_Union";
-  case Type_Func:
-    return "Type_Func";
-  default:
-    UNREACHABLE("TypeKind");
+  case Type_Void: return "Type_Void";
+  case Type_IntegerUnsigned: return "Type_IntegerUnsigned";
+  case Type_IntegerSigned: return "Type_IntegerSigned";
+  case Type_Float: return "Type_Float";
+  case Type_Ptr: return "Type_Ptr";
+  case Type_Array: return "Type_Array";
+  case Type_Struct: return "Type_Struct";
+  case Type_Union: return "Type_Union";
+  case Type_Func: return "Type_Func";
+  default: UNREACHABLE("TypeKind");
   }
 }
 
 const char *expr_kind_to_str(ExprKind ek) {
   switch (ek) {
-  case Expr_Error:
-    return "Expr_Error";
-  case Expr_Literal:
-    return "Expr_Literal";
-  case Expr_UnaryOp:
-    return "Expr_UnaryOp";
-  case Expr_BinOp:
-    return "Expr_BinOp";
-  case Expr_Index:
-    return "Expr_Index";
-  case Expr_Deref:
-    return "Expr_Deref";
-  case Expr_Addr:
-    return "Expr_Addr";
-  case Expr_Assignment:
-    return "Expr_Assignment";
-  case Expr_TypeName:
-    return "Expr_TypeName";
-  case Expr_FuncCall:
-    return "Expr_FuncCall";
-  case Expr_Block:
-    return "Expr_Block";
-  default:
-    UNREACHABLE("ExprKind");
+  case Expr_Error: return "Expr_Error";
+  case Expr_Literal: return "Expr_Literal";
+  case Expr_UnaryOp: return "Expr_UnaryOp";
+  case Expr_BinOp: return "Expr_BinOp";
+  case Expr_Index: return "Expr_Index";
+  case Expr_Deref: return "Expr_Deref";
+  case Expr_Addr: return "Expr_Addr";
+  case Expr_Assignment: return "Expr_Assignment";
+  case Expr_Definition: return "Expr_Definition";
+  case Expr_FuncCall: return "Expr_FuncCall";
+  case Expr_TypeDef: return "Expr_TypeDef";
+  case Expr_Block: return "Expr_Block";
+  default: UNREACHABLE("ExprKind");
   }
 }
 
 void expr_reset(Expr *e) { memset(e, 0, sizeof(*e)); }
 
-Parser parser_new_opt(Lexer *l, ParserOpts opts) { return (Parser){.opts = opts, .l = l}; }
+Parser parser_new_opt(Lexer *l, ParserOpts opts) {
+  Parser p = {.opts = opts, .l = l};
+  da_push_n(&p.type_defs, DEFAULT_TYPES, ARRAY_LEN(DEFAULT_TYPES));
+  if (opts.type_defs) da_push_n(&p.type_defs, opts.type_defs, opts.type_defs_count);
+  return p;
+}
 
 bool parser_get_program(Parser *p, Program *prog) {
   Expr e;
-  while (parser_get_expression(p, &e)) {
+  while (parser_compile_top_level_expr(p, &e)) {
     da_push(&prog->exprs, e);
   }
   if (lexer_has_error(p)) {
@@ -261,7 +261,7 @@ bool parser_get_program(Parser *p, Program *prog) {
   return e->kind == Expr_Error || lexer_has_error(p);
 }
 
-bool parser_get_expression(Parser *p, Expr *e) {
+bool parser_compile_top_level_expr(Parser *p, Expr *e) {
   expr_reset(e);
 
   size_t error_start = p->error.size;
@@ -269,67 +269,34 @@ bool parser_get_expression(Parser *p, Expr *e) {
   Token t = {0};
   LexerState s = lexer_save(p->l);
 
-  if (!lexer_get_token(p->l, &t))
-    return false;
+  if (!lexer_get_token(p->l, &t)) goto finish_expr;
 
   e->loc = t.loc;
+  switch (t.kind) {
+  case TK_Kw_Type: {
+    if (!lexer_get_and_expect(p->l, &t, TK_Ident)) goto bad_typedef;
 
-  // if (token_is_oneof_array(t, TK_Literal_Any)) {
-  //   e->kind = Expr_Literal;
-  //   e->as.literal = (ExprLiteral){
+    StringView name = t.text;
+    if (!lexer_get_and_expect(p->l, &t, ':')) goto bad_typedef;
+    Type t;
+    if (!parser_compile_type(p, &t)) break;
+  bad_typedef:
+    parser__fwd_lex_errorf(p, "\t^ Needed by typedef started at " LEX_LOC_Fmt ".", LEX_LOC_Arg(e->loc));
+  } break;
+  case TK_Kw_Func: {
 
-  //   };
-  //   goto finish_expr;
-  // }
-
-  // if (!lexer_expect(p->l, t, TK_Kw_Printf))
-  //   goto finish_expr;
-  // if (!lexer_get_and_expect(p->l, &t, '(')))
-  //   goto finish_expr;
-  // if (!lexer_get_and_expect_oneof(p->l, &t, TK_Literal_AnyString, ARRAY_LEN(TK_Literal_AnyString)))
-  //   goto finish_expr;
-  // e->kind = Expr_Printf;
-  // e->as.printf.fmt_text = t.text;
-  // e->as.printf.fmt = sb_to_cstr(t.string_value);
-  // if (!lexer_get_and_expect_from_array(p->l, &t, ((const TokenKind[2]){',', ')'}))) {
-  //   lexer__start_error(p, e->loc, "ill-formed printf call: ");
-  //   lexer__finish_error(p, SB_Fmt, SB_Arg(p->l->error));
-  //   goto finish_expr;
-  // }
-  // while (t.kind == ',') {
-  //   Expr arg;
-  //   if (parser_get_expression(p, &arg)) {
-  //     if (arg.kind != Expr_Literal) {
-  //       lexer_errorf(p, LEX_LOC_Fmt ": printf only supports literals. Got %s\n", LEX_LOC_Arg(arg.loc),
-  //                    expr_kind_to_str(arg.kind));
-  //       goto finish_expr;
-  //     }
-  //     da_push(&e->as.printf, arg.as.literal);
-  //   } else {
-  //     lexer_errorf(p, LEX_LOC_Fmt ": printf expected arg. Got <not an expr>\n", LEX_LOC_Arg(p->l->loc));
-  //     goto finish_expr;
-  //   }
-  //   if (!lexer_get_token(p->l, &t)) {
-  //     lexer_errorf(p, SB_Fmt, SB_Arg(p->l->error));
-  //     goto finish_expr;
-  //   }
-  // }
-  // if (!lexer_expect(p->l, t, ')')) {
-  //   lexer__report_error_at_loc(p, t.loc, "printf args list must end with ). Got %s", token_kind_to_str(t.kind));
-  //   goto finish_expr;
-  // }
+  } break;
+  default: {
+  }
+  }
 
 finish_expr:
-  // if (e->kind == Expr_Error) {
-  //   if (lexer_has_error(p->l)) {
-  //     lexer_errorf(p, SB_Fmt, SB_Arg(p->l->error));
-  //   }
+  return e->kind == Expr_Error || p->error.size > error_start;
+  // if (e->kind == Expr_Error || p->error.size > error_start) {
+  //   lexer_restore(p->l, s);
+  //   return false;
   // }
-  if (e->kind == Expr_Error || p->error.size > error_start) {
-    lexer_restore(p->l, s);
-    return false;
-  }
-  return true;
+  // return true;
 }
 
 void parser_log_errors(Parser *p) {
@@ -346,32 +313,20 @@ void parser_diag_remaining_exprs(Parser *p) {
     if (e.kind == Expr_Printf) {
       sb_clear(&sb);
       sb_appendf(&sb, "\tfmt=" SV_Fmt, SV_Arg(e.as.printf.fmt_text));
-      if (e.as.printf.size)
-        sb_append_cstr(&sb, ", args=[");
+      if (e.as.printf.size) sb_append_cstr(&sb, ", args=[");
       da_for_each(Token, arg, e.as.printf) {
-        if (arg != e.as.printf.data)
-          sb_append_cstr(&sb, ", ");
+        if (arg != e.as.printf.data) sb_append_cstr(&sb, ", ");
 
         switch (arg->kind) {
-        case TK_Literal_Integer:
-          sb_appendf(&sb, "%d", arg->int_value);
-          break;
-        case TK_Literal_Float:
-          sb_appendf(&sb, "%f", arg->float_value);
-          break;
-        case TK_Literal_Char:
-          sb_appendf(&sb, "\'%c\'", arg->char_value);
-          break;
+        case TK_Literal_Integer: sb_appendf(&sb, "%d", arg->lit_int); break;
+        case TK_Literal_Float: sb_appendf(&sb, "%f", arg->lit_float); break;
+        case TK_Literal_Char: sb_appendf(&sb, "\'%c\'", arg->lit_char); break;
         case TK_Literal_StringSQ: // fallthrough
-        case TK_Literal_StringDQ:
-          sb_appendf(&sb, SB_Fmt, SB_Arg(arg->string_value));
-          break;
-        default:
-          UNREACHABLE("TokenKind expected literal only");
+        case TK_Literal_StringDQ: sb_appendf(&sb, SB_Fmt, SB_Arg(arg->lit_string)); break;
+        default: UNREACHABLE("TokenKind expected literal only");
         }
       }
-      if (e.as.printf.size)
-        sb_append_cstr(&sb, "]");
+      if (e.as.printf.size) sb_append_cstr(&sb, "]");
       log(INFO, "\t " SB_Fmt, SB_Arg(sb));
     }
   }

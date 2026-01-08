@@ -194,6 +194,7 @@ TOOLS_DEF StringView sv_prefix(StringView sv, size_t n);
 #define sb2sv sv_from_sb
 
 TOOLS_DEF bool sv_eq(StringView a, StringView b);
+#define sv_eq_cstr(sv, cstr) (sv_eq((sv), sv_from_cstr((cstr))))
 TOOLS_DEF bool sv_starts_with(StringView sv, const char *prefix);
 TOOLS_DEF bool sv_ends_with(StringView sv, const char *suffix);
 
@@ -366,48 +367,39 @@ bool read_file(const char *filepath, StringBuilder *sb) {
   bool result = true;
 
   FILE *file = fopen(filepath, "rb");
-  if (!file)
-    return_defer(false);
+  if (!file) return_defer(false);
 
-  if (fseek(file, 0, SEEK_END))
-    return_defer(false);
+  if (fseek(file, 0, SEEK_END)) return_defer(false);
   size_t file_size = ftell(file);
-  if (file_size < 0)
-    return_defer(false);
-  if (fseek(file, 0, SEEK_SET))
-    return_defer(false);
+  if (file_size < 0) return_defer(false);
+  if (fseek(file, 0, SEEK_SET)) return_defer(false);
 
   da_reserve(sb, sb->size + file_size);
   size_t read_size = fread(sb->data + sb->size, file_size, 1, file);
-  if (read_size != 1 || (errno = ferror(file)))
-    return_defer(false);
+  if (read_size != 1 || (errno = ferror(file))) return_defer(false);
   sb->size += file_size;
 
 defer:
   if (!result)
     tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to read file: %s. Got error: %s\n", filepath,
                strerror(errno));
-  if (file)
-    fclose(file);
+  if (file) fclose(file);
   return result;
 }
 bool write_file(const char *filepath, char *data, size_t size) {
   bool result = true;
 
   FILE *file = fopen(filepath, "wb");
-  if (!file)
-    return_defer(false);
+  if (!file) return_defer(false);
 
   size_t write_size = fwrite(data, size, 1, file);
-  if (write_size != 1 || (errno = ferror(file)))
-    return_defer(false);
+  if (write_size != 1 || (errno = ferror(file))) return_defer(false);
 
 defer:
   if (!result)
     tools_logx(TOOLS_ERROR, .omit_log_location = true, "Failed to write file: %s. Got error: %s\n", filepath,
                strerror(errno));
-  if (file)
-    fclose(file);
+  if (file) fclose(file);
   return result;
 }
 
@@ -428,22 +420,12 @@ void tools_default_log_handler(ToolsLogLevel level, ToolsLogOpts opts, const cha
   }
 
   switch (level) {
-  case TOOLS_TRACE:
-    fprintf(stderr, "[TRACE] ");
-  case TOOLS_DEBUG:
-    fprintf(stderr, "[DEBUG] ");
-    break;
-  case TOOLS_INFO:
-    fprintf(stderr, "[INFO]  ");
-    break;
-  case TOOLS_WARN:
-    fprintf(stderr, "[WARN]  ");
-    break;
-  case TOOLS_ERROR:
-    fprintf(stderr, "[ERROR] ");
-    break;
-  case TOOLS_NO_LOGS:
-    return;
+  case TOOLS_TRACE: fprintf(stderr, "[TRACE] ");
+  case TOOLS_DEBUG: fprintf(stderr, "[DEBUG] "); break;
+  case TOOLS_INFO: fprintf(stderr, "[INFO]  "); break;
+  case TOOLS_WARN: fprintf(stderr, "[WARN]  "); break;
+  case TOOLS_ERROR: fprintf(stderr, "[ERROR] "); break;
+  case TOOLS_NO_LOGS: return;
   }
 
   if (!opts.omit_log_location) {
