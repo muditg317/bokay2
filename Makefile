@@ -1,10 +1,10 @@
 CC=clang
-CFLAGS=-Wall -Wextra -Werror -g
+CFLAGS=-Wall -Wextra -Werror -g -O0
 
-bokay: bokay.c tools.h
-	$(CC) $(CFLAGS) -o bokay bokay.c
+main: main.c tools.h lexer.h parser.h bokay.h
+	$(CC) $(CFLAGS) -o main main.c
 
-run: bokay
-	./bokay $(FILE)
+run: main
+	./main $(FILE)
 
 .PHONY: run

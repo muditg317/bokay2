@@ -56,7 +56,7 @@
     abort();                                                                                                           \
   } while (0)
 
-#define TOOLS_ARRAY_LEN(array) (sizeof(array) / sizeof(array[0]))
+#define TOOLS_ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
 #define TOOLS_ARRAY_GET(array, index) (TOOLS_ASSERT((size_t)(index) < TOOLS_ARRAY_LEN(array)), array[(size_t)(index)])
 
 #define TOOLS_COMBINE1(X, Y) X##Y
@@ -91,7 +91,7 @@
 #define span_last(span) ((span)->data[(TOOLS_ASSERT((span)->size > 0), (span)->size - 1)])
 
 #define span_shift(span) shift((span)->data, (span)->size)
-#define span_chop_one(span) span_shift((span))
+#define span_chop_one span_shift
 #define span_chop_back(span, n) (TOOLS_ASSERT((size_t)(n) <= (span)->size), (span)->size -= (n))
 #define span_chop_front(span, n) (span_chop_back((span), (n)), (span)->data += (n))
 
@@ -146,7 +146,7 @@
 #define da_remove_unordered(da, i)                                                                                     \
   (da)->data[(size_t)(i)] = (da)->data[(TOOLS_ASSERT((size_t)(i) < (da)->size), --(da)->size)];
 
-#define da_for_each(Type, it, da) span_for_each((Type), (it), (da))
+#define da_for_each span_for_each
 
 // =====================================================
 // ================= END Dynamic Array =================
@@ -156,18 +156,18 @@
 // ============ StringBuilder / StringView =============
 // =====================================================
 
-typedef struct {
+typedef struct SB {
   DA_FIELDS(char)
 } StringBuilder;
-typedef struct {
+typedef struct SV {
   SPAN_FIELDS(char)
 } StringView;
 
 #define sv_at(sv, index) ((sv).data[(index)])
 #define sv_len(sv) ((sv).size)
 
-#define sb_append(sb, c) da_push((sb), (c))
-#define sb_concat(sb, data, n) da_push_n((sb), (data), (n))
+#define sb_append da_push
+#define sb_concat da_push_n
 #define sb_append_sv(sb, sv) sb_concat((sb), (sv).data, (sv).size)
 #define sb_append_cstr(sb, cstr)                                                                                       \
   do {                                                                                                                 \
@@ -179,33 +179,35 @@ TOOLS_DEF size_t sb_appendf(StringBuilder *sb, const char *fmt, ...);
 TOOLS_DEF size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill);
 #define sb_align(sb, alignment) sb_align_with((sb), (alignment), ' ')
 
-#define sb_free(sb) da_free((sb))
-#define sb_clear(sb) da_clear((sb))
+#define sb_to_cstr(sb) strndup((sb).data, (sb).size)
+
+#define sb_free da_free
+#define sb_clear da_clear
 
 TOOLS_DEF StringView sv_new(char *data, size_t size);
-#define sv_from_parts(data, size) sv_new((data), (size))
+#define sv_from_parts sv_new
 TOOLS_DEF StringView sv_from_cstr(const char *cstr);
 TOOLS_DEF StringView sv_prefix(StringView sv, size_t n);
-#define sv_from_sb(sb) sv_new((sb)->data, (sb)->size)
-#define sb2sv(sb) sv_from_sb(sb)
-#define sv_from_da(da) sv_new((da)->data, (da)->size)
-#define da2sv(da) sv_from_da(da)
+#define sv_from_da(da) sv_new((da).data, (da).size)
+#define da2sv sv_from_da
+#define sv_from_sb sv_from_da
+#define sb2sv sv_from_sb
 
 TOOLS_DEF bool sv_eq(StringView a, StringView b);
 TOOLS_DEF bool sv_starts_with(StringView sv, const char *prefix);
 TOOLS_DEF bool sv_ends_with(StringView sv, const char *suffix);
 
-#define sv_chop_front_ignore(sv, n) span_chop_front((sv), (n))
+#define sv_chop_front_ignore span_chop_front
 TOOLS_DEF StringView sv_chop_front(StringView *sv, size_t n);
-#define sv_chop_left(sv, n) sv_chop_front((sv), (n))
+#define sv_chop_left sv_chop_front
 TOOLS_DEF StringView sv_chop_by_delim(StringView *sv, char delim);
 TOOLS_DEF StringView sv_chop_back(StringView *sv, size_t n);
-#define sv_chop_right(sv, n) sv_chop_back((sv), (n))
+#define sv_chop_right sv_chop_back
 
 TOOLS_DEF StringView sv_trim_start(StringView sv);
-#define sv_trim_left(sv) sv_trim_start(sv)
+#define sv_trim_left sv_trim_start
 TOOLS_DEF StringView sv_trim_end(StringView sv);
-#define sv_trim_right(sv) sv_trim_end(sv)
+#define sv_trim_right sv_trim_end
 TOOLS_DEF StringView sv_trim(StringView sv);
 
 #define sv_for_each(it, sv) span_for_each(char, (it), (sv))
@@ -217,6 +219,8 @@ TOOLS_DEF StringView sv_trim(StringView sv);
 #ifndef SV_Arg
 #define SV_Arg(sv) (int)(sv).size, (sv).data
 #endif // SV_Arg
+#define SB_Fmt SV_Fmt
+#define SB_Arg SV_Arg
 // USAGE:
 //   String_View name = ...;
 //   printf("Name: "SV_Fmt"\n", SV_Arg(name));
@@ -232,7 +236,7 @@ TOOLS_DEF StringView sv_trim(StringView sv);
 TOOLS_DEF bool read_file(const char *filepath, StringBuilder *sb);
 TOOLS_DEF bool write_file(const char *filepath, char *data, size_t size);
 #define write_file_sv(filepath, sv) write_file((filepath), (sv).data, (sv).size)
-#define write_file_sb(filepath, sb) write_file_sv((filepath), (sb))
+#define write_file_sb write_file_sv
 
 // =====================================================
 // ================== END Files / IO ===================
@@ -243,7 +247,7 @@ TOOLS_DEF bool write_file(const char *filepath, char *data, size_t size);
 // =====================================================
 
 typedef enum { TOOLS_TRACE, TOOLS_DEBUG, TOOLS_INFO, TOOLS_WARN, TOOLS_ERROR, TOOLS_NO_LOGS } ToolsLogLevel;
-typedef struct {
+typedef struct ToolsLogOpts {
   const char *prefix;
   const char *debug_label;
   bool omit_log_location;

@@ -1,8 +1,11 @@
+#ifndef LEXER_H_
+#define LEXER_H_
+
 #include "tools.h"
 
 #define LEXER_LOG_PREFIX "bokay.lexer"
 
-typedef enum {
+typedef enum TokenKind {
   TK_Error = -1,
   // 0-255 reserved for single-character tokens
   TK_EOF = 256,
@@ -46,11 +49,23 @@ typedef enum {
 
   TK_KEYWORD_MIN,
   TK_Kw_Return = TK_KEYWORD_MIN,
-  TK_Kw_Printf,
-  TK_KEYWORD_MAX = TK_Kw_Printf,
+  TK_Kw_Type,
+  TK_Kw_Func,
+  TK_KEYWORD_MAX = TK_Kw_Type,
 
   TK_COUNT
 } TokenKind;
+
+const TokenKind TK_Literal_AnyString[2] = {
+  TK_Literal_StringSQ, TK_Literal_StringDQ
+};
+const TokenKind TK_Literal_Any[TK_LITERAL_MAX-TK_LITERAL_MIN+1] = {
+  [-TK_LITERAL_MIN+TK_Literal_Integer] = TK_Literal_Integer,
+  [-TK_LITERAL_MIN+TK_Literal_Float] = TK_Literal_Float,
+  [-TK_LITERAL_MIN+TK_Literal_Char] = TK_Literal_Char,
+  [-TK_LITERAL_MIN+TK_Literal_StringSQ] = TK_Literal_StringSQ,
+  [-TK_LITERAL_MIN+TK_Literal_StringDQ] = TK_Literal_StringDQ,
+};
 
 const char *puncts[TK_PUNCT_MAX - TK_PUNCT_MIN + 1] = {
     [-TK_PUNCT_MIN + TK_Punct_PlusPlus] = "++",  [-TK_PUNCT_MIN + TK_Punct_MinusMinus] = "--",
@@ -69,10 +84,11 @@ const char *puncts[TK_PUNCT_MAX - TK_PUNCT_MIN + 1] = {
 
 const char *keywords[TK_KEYWORD_MAX - TK_KEYWORD_MIN + 1] = {
     [-TK_KEYWORD_MIN + TK_Kw_Return] = "return",
-    [-TK_KEYWORD_MIN + TK_Kw_Printf] = "printf",
+    [-TK_KEYWORD_MIN + TK_Kw_Type] = "type",
+    [-TK_KEYWORD_MIN + TK_Kw_Func] = "func",
 };
 
-static_assert(TK_COUNT == 255 + 35, "TokenKind enum changed");
+static_assert(TK_COUNT == 255 + 34, "TokenKind enum changed");
 const char *token_kind_to_str(TokenKind kind) {
   if (kind >= 0 && kind <= 255) {
     static char buf[4] = {'\'', 0, '\'', 0};
@@ -113,16 +129,17 @@ const char *token_kind_to_str(TokenKind kind) {
   }
 }
 
-typedef struct {
+typedef struct LexLoc {
+  const char *filepath;
   size_t line;
   size_t column;
 } LexLoc;
 #define LEX_LOC_Fmt "%s:%zu:%-4zu"
-#define LEX_LOC_Arg(filepath, loc) (filepath), (loc).line, (loc).column
+#define LEX_LOC_Arg(loc) (loc).filepath, (loc).line, (loc).column
 
-#define lexer_advance_loc(loc, n) ((LexLoc){.line = (loc).line, .column = (loc).column + (n)})
+#define lexer_advance_loc(loc, n) ((LexLoc){.filepath = (loc).filepath, .line = (loc).line, .column = (loc).column + (n)})
 
-typedef struct {
+typedef struct Token {
   TokenKind kind;
   LexLoc loc;
   StringView text;
@@ -133,7 +150,12 @@ typedef struct {
   StringBuilder string_value;
 } Token;
 
-typedef struct {
+void token_reset(Token *t);
+bool token_is(Token t, TokenKind tk);
+bool token_is_oneof(Token t, const TokenKind *tks, size_t tk_count);
+#define token_is_oneof_array(t, tks) (token_is_oneof((t), (tks), ARRAY_LEN((tks))))
+
+typedef struct LexerState {
   StringView source;
   LexLoc loc;
 } LexerState;
@@ -143,10 +165,10 @@ typedef struct LexerOpts {
   bool keep_comments;
   bool no_float_literals;
 } LexerOpts;
-typedef struct {
+typedef struct Lexer {
   LexerOpts opts;
   StringView source;
-  LexLoc lex_loc;
+  LexLoc loc;
 
   StringBuilder error;
 } Lexer;
@@ -155,29 +177,38 @@ typedef struct {
 Lexer lexer_new_opt(StringView source, LexerOpts opts);
 #define lexer_new(source, ...) lexer_new_opt((source), (LexerOpts){__VA_ARGS__})
 
+
 bool lexer_get_token(Lexer *l, Token *t);
-bool lexer_expect_token_kind(Lexer *l, Token t, TokenKind tk);
-bool lexer_expect_one_of_token_kinds(Lexer *l, Token t, TokenKind *tks, size_t tk_count);
+bool lexer_expect(Lexer *l, Token t, TokenKind tk);
+bool lexer_expect_oneof(Lexer *l, Token t, const TokenKind *tks, size_t tk_count);
+#define lexer_expect_from_cstr(l, t, cstr) lexer_expect_oneof((l), (t), (const TokenKind *)(cstr), strlen((cstr))-1)
+#define lexer_expect_from_array(l, t, arr) lexer_expect_oneof((l), (t), (arr), ARRAY_LEN((arr)))
 bool lexer_get_and_expect(Lexer *l, Token *t, TokenKind tk);
-#define lexer_loc(l) ((l)->lex_loc)
+bool lexer_get_and_expect_oneof(Lexer *l, Token *t, const TokenKind *tks, size_t tk_count);
+#define lexer_get_and_expect_from_cstr(l, t, cstr) lexer_get_and_expect_oneof((l), (t), (const TokenKind *)(cstr), strlen((cstr))-1)
+#define lexer_get_and_expect_from_array(l, t, arr) lexer_get_and_expect_oneof((l), (t), (arr), ARRAY_LEN((arr)))
+#define lexer_loc(l) ((l)->loc)
 #define lexer_has_error(l) ((l)->error.size > 0)
 #define lexer_clear_error(l) sb_clear(&(l)->error)
+void lexer_log_errors(Lexer *l);
 LexerState lexer_save(Lexer *l);
 void lexer_restore(Lexer *l, LexerState state);
 
+void lexer_diag_remaining_tokens(Lexer *l);
 #define lexer_diag_tok(level, l, t)                                                                                    \
-  log(level, LEX_LOC_Fmt ": [%s] " SV_Fmt, LEX_LOC_Arg((l)->opts.filepath, (t).loc), token_kind_to_str((t).kind),      \
+  log(level, LEX_LOC_Fmt ": [%s] " SV_Fmt, LEX_LOC_Arg((t).loc), token_kind_to_str((t).kind),      \
       SV_Arg((t).text))
 
 // internal definitions
+#define lexer_errorf(l, fmt, ...) sb_appendf(&(l)->error, fmt __VA_OPT__(,) __VA_ARGS__)
 #define lexer__start_error(l, loc, fmt, ...)                                                                           \
-  sb_appendf(&(l)->error, LEX_LOC_Fmt ": " fmt, LEX_LOC_Arg((l)->opts.filepath, loc) __VA_OPT__(, ) __VA_ARGS__)
-#define lexer__continue_error(l, fmt, ...) sb_appendf(&(l)->error, fmt __VA_OPT__(, ) __VA_ARGS__)
-#define lexer__finish_error(l, fmt, ...) sb_appendf(&(l)->error, fmt "\n" __VA_OPT__(, ) __VA_ARGS__)
+  lexer_errorf((l), LEX_LOC_Fmt ": " fmt, LEX_LOC_Arg((loc)) __VA_OPT__(, ) __VA_ARGS__)
+#define lexer__continue_error(l, fmt, ...) lexer_errorf((l), fmt __VA_OPT__(, ) __VA_ARGS__)
+#define lexer__finish_error(l, fmt, ...) lexer_errorf((l), fmt "\n" __VA_OPT__(, ) __VA_ARGS__)
 #define lexer__report_error_at_loc(l, loc, fmt, ...)                                                                   \
   (lexer__start_error((l), (loc), fmt __VA_OPT__(, ) __VA_ARGS__), lexer__finish_error((l), ""))
 #define lexer__report_error(l, offset, fmt, ...)                                                                       \
-  lexer__report_error_at_loc((l), lexer_advance_loc((l)->lex_loc, (offset)), fmt __VA_OPT__(, ) __VA_ARGS__)
+  lexer__report_error_at_loc((l), lexer_advance_loc((l)->loc, (offset)), fmt __VA_OPT__(, ) __VA_ARGS__)
 
 bool lexer__skip_whitespace(Lexer *l);
 bool lexer__skip_comment(Lexer *l);
@@ -185,7 +216,21 @@ bool lexer__skip_comment(Lexer *l);
 bool lexer__is_ident_start(char c) { return isalpha(c) || c == '_'; }
 bool lexer__is_ident(char c) { return isalnum(c) || c == '_'; }
 
-// IMPLEMENTATIONS
+
+#endif // LEXER_H_
+
+#ifdef LEXER_IMPLEMENTATION
+
+void token_reset(Token *t) { sb_free(&t->string_value); memset(t, 0, sizeof(*t)); }
+bool token_is(Token t, TokenKind tk) {return token_is_oneof(t, &tk, 1);}
+bool token_is_oneof(Token t, const TokenKind *tks, size_t tk_count) {
+  for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
+    if (t.kind == *tk) {
+      return true;
+    }
+  }
+  return false;
+}
 
 Lexer lexer_new_opt(StringView source, LexerOpts opts) {
   if (!opts.filepath) {
@@ -194,7 +239,7 @@ Lexer lexer_new_opt(StringView source, LexerOpts opts) {
   return (Lexer){
       .opts = opts,
       .source = source,
-      .lex_loc = {.line = 1, .column = 1},
+      .loc = {.filepath = opts.filepath, .line = 1, .column = 1},
       .error = (StringBuilder){0},
   };
 }
@@ -206,10 +251,10 @@ bool lexer__skip_whitespace(Lexer *l) {
   StringView whitespace = sv_trim_left(l->source);
   sv_for_each(it, whitespace) {
     if (*it == '\n') {
-      l->lex_loc.line++;
-      l->lex_loc.column = 1;
+      l->loc.line++;
+      l->loc.column = 1;
     } else {
-      l->lex_loc.column++;
+      l->loc.column++;
     }
   }
   sv_chop_front_ignore(&l->source, whitespace.size);
@@ -233,8 +278,8 @@ bool lexer__skip_comment(Lexer *l) {
   sv_chop_front_ignore(&l->source, 1);
   if (buf[1] == '/') { // Single-line comment
     sv_chop_by_delim(&l->source, '\n');
-    l->lex_loc.line++;
-    l->lex_loc.column = 1;
+    l->loc.line++;
+    l->loc.column = 1;
     return true;
   }
   // Multi-line comment /* ... */
@@ -244,14 +289,14 @@ bool lexer__skip_comment(Lexer *l) {
     char c1 = sv_at(l->source, 1);
     if (c0 == '*' && c1 == '/') {
       sv_chop_front_ignore(&l->source, 2); // chop the '*/'
-      l->lex_loc.column += 2;
+      l->loc.column += 2;
       return true;
     }
     if (c0 == '\n') {
-      l->lex_loc.line++;
-      l->lex_loc.column = 1;
+      l->loc.line++;
+      l->loc.column = 1;
     } else {
-      l->lex_loc.column++;
+      l->loc.column++;
     }
     sv_chop_front_ignore(&l->source, 1);
   }
@@ -261,20 +306,20 @@ bool lexer__skip_comment(Lexer *l) {
 
 // False on error
 bool lexer_get_token(Lexer *l, Token *t) {
-  sb_free(&t->string_value);
-  memset(t, 0, sizeof(*t)); // Initialize token
+  token_reset(t);
 
   size_t error_start = l->error.size;
   while (lexer__skip_whitespace(l) || lexer__skip_comment(l)) {
   }
 
+  if (l->source.size <= 0) {
+    return false;
+  }
+
   t->kind = TK_EOF;
-  t->loc = l->lex_loc;
+  t->loc = l->loc;
   size_t tok_len = 0;
 
-  if (l->source.size <= 0) {
-    goto finish_token;
-  }
 
   char c = l->source.data[0];
   t->kind = c; // Default to single-character token
@@ -293,11 +338,20 @@ bool lexer_get_token(Lexer *l, Token *t) {
   // Numeric literals
   if (isdigit(c)) {
     t->kind = TK_Literal_Integer;
+    t->int_value = c-'0';
+    size_t mantissa = 0;
+    size_t mantisa_div = 1;
     // Consume numeric literal characters
     while (tok_len < l->source.size) {
       char nc = l->source.data[tok_len];
       if (isdigit(nc)) {
         tok_len++;
+        if (t->kind == TK_Literal_Integer) {
+          t->int_value = t->int_value*10 + nc-'0';
+        } else {
+          mantissa = mantissa*10 + nc-'0';
+          mantisa_div *= 10;
+        }
       } else if (!l->opts.no_float_literals) { // Handle float literals
         if (nc == '.') {
           if (t->kind == TK_Literal_Float) {
@@ -313,6 +367,10 @@ bool lexer_get_token(Lexer *l, Token *t) {
       } else {
         break;
       }
+    }
+    if (t->kind == TK_Literal_Float) {
+      t->float_value = t->int_value + (double)mantissa/mantisa_div;
+      t->int_value = 0;
     }
   }
 
@@ -353,7 +411,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
     t->kind = quote_char == '"' ? TK_Literal_StringDQ : TK_Literal_StringSQ;
     tok_len = 1; // Start after opening quote
     bool closed = false;
-    LexLoc endLoc = l->lex_loc;
+    LexLoc endLoc = l->loc;
     while (tok_len < l->source.size) {
       char nc = l->source.data[tok_len];
       if (nc == '\\') {
@@ -400,7 +458,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
     }
     if (!closed) {
       lexer__report_error_at_loc(l, endLoc, "Unterminated %s. Started at " LEX_LOC_Fmt, token_kind_to_str(t->kind),
-                                 LEX_LOC_Arg(l->opts.filepath, l->lex_loc));
+                                 LEX_LOC_Arg(l->loc));
     }
     goto finish_token;
   }
@@ -408,22 +466,19 @@ bool lexer_get_token(Lexer *l, Token *t) {
 finish_token:
   if (tok_len > 0) {
     t->text = sv_chop_front(&l->source, tok_len);
-    l->lex_loc.column += tok_len;
+    l->loc.column += tok_len;
   }
+  if (l->error.size <= error_start) t->kind = TK_Error;
   return l->error.size <= error_start;
 }
 
-bool lexer_expect_token_kind(Lexer *l, Token t, TokenKind tk) { return lexer_expect_one_of_token_kinds(l, t, &tk, 1); }
+bool lexer_expect(Lexer *l, Token t, TokenKind tk) { return lexer_expect_oneof(l, t, &tk, 1); }
 
-bool lexer_expect_one_of_token_kinds(Lexer *l, Token t, TokenKind *tks, size_t tk_count) {
-  for (TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
-    if (t.kind == *tk) {
-      return true;
-    }
-  }
+bool lexer_expect_oneof(Lexer *l, Token t, const TokenKind *tks, size_t tk_count) {
+  if (token_is_oneof(t, tks, tk_count)) return true;
 
   lexer__start_error(l, t.loc, "Expected ");
-  for (TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
+  for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
     lexer__continue_error(l, "%s", token_kind_to_str(*tk));
     if (tk + 1 < tks + tk_count)
       lexer__continue_error(l, " or ");
@@ -436,5 +491,42 @@ bool lexer_get_and_expect(Lexer *l, Token *t, TokenKind tk) {
   if (!lexer_get_token(l, t)) {
     return false;
   }
-  return lexer_expect_token_kind(l, *t, tk);
+  return lexer_expect(l, *t, tk);
 }
+
+bool lexer_get_and_expect_oneof(Lexer *l, Token *t, const TokenKind *tks, size_t tk_count) {
+  if (!lexer_get_token(l, t)) {
+    return false;
+  }
+  return lexer_expect_oneof(l, *t, tks, tk_count);
+}
+
+void lexer_log_errors(Lexer *l) {
+  if (lexer_has_error(l)) {
+    log(ERROR, "Lexer errors:\n" SV_Fmt, SV_Arg(l->error));
+  }
+}
+
+LexerState lexer_save(Lexer *l) {
+  return (LexerState){
+    .source=l->source,
+    .loc=l->loc
+  };
+}
+
+void lexer_restore(Lexer *l, LexerState s) {
+  l->source = s.source;
+  l->loc = s.loc;
+}
+
+void lexer_diag_remaining_tokens(Lexer *l) {
+  Token t;
+  while (lexer_get_token(l, &t)) {
+    lexer_diag_tok(INFO, l, t);
+    // if (t.kind == TK_EOF) {
+    //   break;
+    // }
+  }
+}
+
+#endif // LEXER_IMPLEMENTATION
