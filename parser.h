@@ -94,10 +94,7 @@ struct Expr {
   } as;
 };
 
-// typedef struct Function {
-//   FuncSignature signature;
-//   ExprBlock body;
-// } Function;
+void expr_reset(Expr *e);
 
 typedef struct Program {
   TypeDefs types;
@@ -108,8 +105,6 @@ typedef struct Program {
     DA_FIELDS(Expr);
   } exprs;
 } Program;
-
-void expr_reset(Expr *e);
 
 typedef struct ParserOpts {
   TypeDef *type_defs;
@@ -137,7 +132,9 @@ bool parser_get_expression(Parser *p, Expr *e);
 void parser_log_errors(Parser *p);
 
 void parser_diag_remaining_exprs(Parser *p);
-#define parser_diag_expr(level, p, e) log(level, LOC_Fmt ": [%s] ", LOC_Arg((e).loc), expr_kind_to_str((e).kind))
+#define parser_diag_expr(level, p, e)                                                                                  \
+  log(level, LOC_Fmt ": [%s] " SV_Fmt, LOC_Arg((e).loc), expr_kind_to_str((e).kind),                                   \
+      SV_Arg((e).kind == EK_Empty ? (e).text : sv_from_cstr_lit("")))
 
 #endif // PARSER_H_
 
@@ -147,7 +144,21 @@ void parser_diag_remaining_exprs(Parser *p);
 #define parser__fwd_lex_errorf(p, fmt, ...)                                                                            \
   serror_forwardf((p), (p)->l, "\n\t^ Due to lexer error: ", fmt __VA_OPT__(, ) __VA_ARGS__)
 
+bool parser_compile_expr_or_statement(Parser *p, Expr *expr);
+bool parser_compile_expr(Parser *p, Expr *expr);
+bool parser_compile_block(Parser *p, Expr *expr);
+bool parser_compile_if(Parser *p, Expr *expr);
+bool parser_compile_while(Parser *p, Expr *expr);
+bool parser_compile_return(Parser *p, Expr *expr);
 bool parser_compile_variable(Parser *p, Token ident, Variable *var);
+bool parser_compile_assignment(Parser *p, Expr *expr);
+bool parser_compile_ternary(Parser *p, Expr *cond, Expr *expr);
+bool parser_compile_binop(Parser *p, size_t precedence, Expr *expr);
+bool parser_compile_postfix_expr(Parser *p, Expr *expr);
+bool parser_compile_funcall(Parser *p, Expr *func, Expr *expr);
+bool parser_compile_index(Parser *p, Expr *ptr, Expr *expr);
+bool parser_compile_expr_list_until(Parser *p, char delim, Expr *expr);
+bool parser_compile_primary_expr(Parser *p, Expr *expr);
 
 #define TYPE_PARSER_IMPL
 #include "type_parser.h"
@@ -198,178 +209,23 @@ bool parser_get_program(Parser *p, Program *prog) {
   return e.kind == EK_Error || serror_exists(p);
 }
 
-// bool parser_compile_expr_or_statement(Parser *p, Expr *expr) {
-//   expr = compile_expr();
-//   s = save();
-//   get_token();
-//   if (';') expr.type = void_;
-//   else restore(s);
-//   return expr;
-// }
-
-// bool parser_compile_expr(Parser *p, Expr *expr) {
-//   s = save();
-//   get_token();
-//   if ('{') return compile_block();
-//   else if (TK_Keyword_If) return compile_if();
-//   else if (TK_Keyword_While) return compile_while();
-//   else if (TK_Keyword_Return) return compile_return();
-//   else if (TK_Ident) { // maybe definition
-//     compile_variable(tok.text); // captures `: <type>`.
-//     get_expect(':');
-//     type = parser_compile_type();
-//     s2 = save();
-//     get_token();
-//     if ('=') init_val = compile_expr();
-//     else restore(s2);
-//     return definition(type, init_val);
-//   }
-//   restore(s);
-//   return compile_assignment();
-// }
-
-// bool parser_compile_block(Parser *p, Expr *expr) {
-//   get_token();
-//   while (!'}') {
-//     append(compile_expr());
-//     get_token();
-//   }
-// }
-
-// bool parser_compile_if(Parser *p, Expr *expr) {
-//   cond = compile_expr();
-//   then = compile_expr();
-//   s = save();
-//   get_token();
-//   if (TK_Keyword_Else) else_ = compile_expr;
-//   else restore(s);
-// }
-
-// bool parser_compile_while(Parser *p, Expr *expr) {
-//   cond = compile_expr();
-//   loop = compile_expr();
-//   return while_(cond, loop);
-// }
-
-// bool parser_compile_return(Parser *p, Expr *expr) { return compile_expr(); }
-
-bool parser_compile_variable(Parser *p, Token ident, Variable *var) {
-  var->name = ident.text;
-  Token t = {0};
-  if (!lexer_get_and_expect(p->l, &t, TK_CHAR(':'))) {
-    return parser__fwd_lex_errorf(p, "Expected `:` after variable name.");
-  }
-  if (!parser_compile_type(p, &var->type)) {
-    return serror_causedf(p, "Failed to compile type of variable defined at " LOC_Fmt ".", LOC_Arg(ident.loc));
-  }
-  return true;
-}
-
-// bool parser_compile_assignment(Parser *p, Expr *expr) {
-//   lhs = compile_binop(0);
-//   get_token();
-//   if (expect_oneof('=' || "XX=")) {
-//     op = tok;
-//     rhs = compile_assignment();
-//     // maybe a while loop idk
-//     return assignment(lhs, op, rhs);
-//   } else if ('?') {
-//     return compile_ternary(lhs);
-//   }
-//   return lhs;
-// }
-
-// bool parser_compile_ternary(Parser *p, cond, Expr *expr) {
-//   iftrue = compile_expr();
-//   get_and_expect(':');
-//   iffalse = compile_expr();
-//   return ternary(cond, iftrue, iffalse);
-// }
-
-// bool parser_compile_binop(Parser *p, precedence, Expr *expr) {
-//   if (precedence >= max_binop_precedence) return compile_postfix_expr();
-//   lhs = compile_binop(precedence + 1); // capture all higher precedence binops
-//   s = save();
-//   get_token();
-//   while (op = expect_binop(tok) && binop_precedence(op) == precedence) { // build chain at precedence
-//     rhs = compile_binop(precedence + 1);                                 // capture higher precendence within chain
-//     lhs = binop(lhs, op, rhs);
-//     s = save();
-//     get_token();
-//   }
-//   restore(s);
-//   return lhs;
-// }
-
-// bool parser_compile_postfix_expr(Parser *p, Expr *expr) {
-//   // funcall(), index[]
-//   expr = compile_primary_expr();
-//   s = save();
-//   get_token();
-//   while (expect_oneof('(', '[')) {
-//     if ('(') expr = compile_funcall(expr);
-//     else if ('[') expr = compile_index(expr);
-//     s = save();
-//     get_token();
-//   }
-//   restore(s);
-//   return expr;
-// }
-
-// bool parser_compile_funcall(Parser *p, func, Expr *expr) { return funcall(func, compile_expr_list_until(')');
-// }
-// bool parser_compile_index(Parser *p, ptr, Expr *expr) { return index(ptr, compile_expr_list_until(']')); }
-
-// bool parser_compile_expr_list_until(Parser *p, delim, Expr *expr) {
-//   Exprs exprs;
-
-//   s = save();
-//   get_token();
-//   if (tok == delim) return exprs;
-//   restore(s);
-
-//   while (expr = compile_expr()) {
-//     push(exprs, expr);
-//     get_and_expect(',', delim);
-//     if (',') continue;
-//     else break;
-//   }
-
-//   return exprs;
-// }
-
-// bool parser_compile_primary_expr(Parser *p, Expr *expr) {
-//   get_token();
-//   if ('(') {
-//     expr = compile_expr();
-//     get_and_expect(')');
-//     return expr;
-//   } else if (op = expect_unary(tok)) { // -neg, *deref, &addr, !not
-//     expr = compile_expr();
-//     return unary(op, expr);
-//   } else if (is_literal(tok)) {
-//     return literal(tok);
-//   } else if (TK_Ident) {
-//     return variable(tok);
-//   }
-// }
-
 bool parser_compile_top_level_expr(Parser *p, Expr *e) {
   expr_reset(e);
 
   size_t error_start = p->error.size;
 
-  Token tok = {0};
+  Token start_tok = {0};
   LexerState s = lexer_save(p->l);
 
-  if (!lexer_get_token(p->l, &tok)) goto finish_expr;
-  e->loc = tok.loc;
-  if (token_is(tok, TK_EOF)) goto finish_expr;
+  if (!lexer_get_token(p->l, &start_tok)) goto finish_expr;
+  e->loc = start_tok.loc;
+  if (token_is(start_tok, TK_EOF)) goto finish_expr;
 
-  if (token_is(tok, TK_Keyword_Type)) {
+  if (token_is(start_tok, TK_Keyword_Type)) {
     e->kind = EK_Empty;
     // e->type = parser__find_type(p, "void");
     // TypeDef type = {0};
+    Token tok = {0};
     if (!lexer_get_and_expect(p->l, &tok, TK_Ident)) goto bad_typedef;
     StringView alias = tok.text;
     if (!lexer_get_and_expect(p->l, &tok, TK_CHAR('='))) goto bad_typedef;
@@ -391,18 +247,169 @@ bool parser_compile_top_level_expr(Parser *p, Expr *e) {
   }
   lexer_restore(p->l, s); // unconsume non-`type` token
 
-  // *e = compile_expr();
-  // if (!parser_compile_expr(p, e)) goto finish_expr;
+  // if (!parser_compile_expr_or_statement(p, e)) goto finish_expr;
 
 finish_expr:
-  e->text = sv_new(s.source.data, p->l->source.data - s.source.data);
+  if (serror_exists(p->l)) parser__fwd_lex_errorf(p, "Failed to parse top level expr.");
+  e->text = sv_new(start_tok.text.data, p->l->source.data - start_tok.text.data);
   return e->kind != EK_Error && p->error.size <= error_start;
-  // if (e->kind == EK_Error || p->error.size > error_start) {
-  //   lexer_restore(p->l, s);
-  //   return false;
-  // }
-  // return true;
 }
+
+// bool parser_compile_expr_or_statement(Parser *p, Expr *expr) {
+//   expr = parser_compile_expr(p, , expr);
+//   s = save();
+//   get_token();
+//   if (';') expr.type = void_;
+//   else restore(s);
+//   return expr;
+// }
+
+// bool parser_compile_expr(Parser *p, Expr *expr) {
+//   s = save();
+//   get_token();
+//   if ('{') return parser_compile_block(p, , expr);
+//   else if (TK_Keyword_If) return parser_compile_if(p, , expr);
+//   else if (TK_Keyword_While) return parser_compile_while(p, , expr);
+//   else if (TK_Keyword_Return) return parser_compile_return(p, , expr);
+//   else if (TK_Ident) { // maybe definition
+//     parser_compile_variable(p, tok.text, expr); // captures `: <type>`.
+//     get_expect(':');
+//     type = parser_compile_type();
+//     s2 = save();
+//     get_token();
+//     if ('=') init_val = parser_compile_expr(p, , expr);
+//     else restore(s2);
+//     return definition(type, init_val);
+//   }
+//   restore(s);
+//   return parser_compile_assignment(p, , expr);
+// }
+
+// bool parser_compile_block(Parser *p, Expr *expr) {
+//   get_token();
+//   while (!'}') {
+//     append(parser_compile_expr(p, , expr));
+//     get_token();
+//   }
+// }
+
+// bool parser_compile_if(Parser *p, Expr *expr) {
+//   cond = parser_compile_expr(p, , expr);
+//   then = parser_compile_expr(p, , expr);
+//   s = save();
+//   get_token();
+//   if (TK_Keyword_Else) else_ = compile_expr;
+//   else restore(s);
+// }
+
+// bool parser_compile_while(Parser *p, Expr *expr) {
+//   cond = parser_compile_expr(p, , expr);
+//   loop = parser_compile_expr(p, , expr);
+//   return while_(cond, loop);
+// }
+
+// bool parser_compile_return(Parser *p, Expr *expr) { return parser_compile_expr(p, , expr); }
+
+bool parser_compile_variable(Parser *p, Token ident, Variable *var) {
+  var->name = ident.text;
+  Token t = {0};
+  if (!lexer_get_and_expect(p->l, &t, TK_CHAR(':'))) {
+    return parser__fwd_lex_errorf(p, "Expected `:` after variable name.");
+  }
+  if (!parser_compile_type(p, &var->type)) {
+    return serror_causedf(p, "Failed to compile type of variable defined at " LOC_Fmt ".", LOC_Arg(ident.loc));
+  }
+  return true;
+}
+
+// bool parser_compile_assignment(Parser *p, Expr *expr) {
+//   lhs = parser_compile_binop(p, 0, expr);
+//   get_token();
+//   if (expect_oneof('=' || "XX=")) {
+//     op = tok;
+//     rhs = parser_compile_assignment(p, , expr);
+//     // maybe a while loop idk
+//     return assignment(lhs, op, rhs);
+//   } else if ('?') {
+//     return parser_compile_ternary(p, lhs, expr);
+//   }
+//   return lhs;
+// }
+
+// bool parser_compile_ternary(Parser *p, cond, Expr *expr) {
+//   iftrue = parser_compile_expr(p, , expr);
+//   get_and_expect(':');
+//   iffalse = parser_compile_expr(p, , expr);
+//   return ternary(cond, iftrue, iffalse);
+// }
+
+// bool parser_compile_binop(Parser *p, precedence, Expr *expr) {
+//   if (precedence >= max_binop_precedence) return parser_compile_postfix_expr(p, , expr);
+//   lhs = parser_compile_binop(p, precedence + 1, expr); // capture all higher precedence binops
+//   s = save();
+//   get_token();
+//   while (op = expect_binop(tok) && binop_precedence(op) == precedence) { // build chain at precedence
+//     rhs = parser_compile_binop(p, precedence + 1, expr);                                 // capture higher
+//     precendence within chain lhs = binop(lhs, op, rhs); s = save(); get_token();
+//   }
+//   restore(s);
+//   return lhs;
+// }
+
+// bool parser_compile_postfix_expr(Parser *p, Expr *expr) {
+//   // funcall(), index[]
+//   expr = parser_compile_primary_expr(p, , expr);
+//   s = save();
+//   get_token();
+//   while (expect_oneof('(', '[')) {
+//     if ('(') expr = parser_compile_funcall(p, expr, expr);
+//     else if ('[') expr = parser_compile_index(p, expr, expr);
+//     s = save();
+//     get_token();
+//   }
+//   restore(s);
+//   return expr;
+// }
+
+// bool parser_compile_funcall(Parser *p, func, Expr *expr) { return funcall(func, parser_compile_expr_list_until(p,
+// ')', expr);
+// }
+// bool parser_compile_index(Parser *p, ptr, Expr *expr) { return index(ptr, parser_compile_expr_list_until(p, ']',
+// expr)); }
+
+// bool parser_compile_expr_list_until(Parser *p, delim, Expr *expr) {
+//   Exprs exprs;
+
+//   s = save();
+//   get_token();
+//   if (tok == delim) return exprs;
+//   restore(s);
+
+//   while (expr = parser_compile_expr(p, , expr)) {
+//     push(exprs, expr);
+//     get_and_expect(',', delim);
+//     if (',') continue;
+//     else break;
+//   }
+
+//   return exprs;
+// }
+
+// bool parser_compile_primary_expr(Parser *p, Expr *expr) {
+//   get_token();
+//   if ('(') {
+//     expr = parser_compile_expr(p, , expr);
+//     get_and_expect(')');
+//     return expr;
+//   } else if (op = expect_unary(tok)) { // -neg, *deref, &addr, !not
+//     expr = parser_compile_expr(p, , expr);
+//     return unary(op, expr);
+//   } else if (is_literal(tok)) {
+//     return literal(tok);
+//   } else if (TK_Ident) {
+//     return variable(tok);
+//   }
+// }
 
 void parser_log_errors(Parser *p) {
   if (serror_exists(p)) { log(ERROR, "Parser errors:\n" SV_Fmt, SV_Arg(p->error)); }

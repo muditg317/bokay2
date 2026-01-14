@@ -144,9 +144,9 @@ bool bokay_new_opt(BokayEngine *b, BokayNewOpts opts) {
 
 bool bokay_interpret(BokayEngine *b) {
   bool result = true;
-  Program prog;
-  parser_get_program(&b->p, &prog);
-  diag_types(&prog.types);
+  // Program prog;
+  // parser_get_program(&b->p, &prog);
+  // diag_types(&prog.types);
   // Expr e;
   // Value v;
   // while (parser_compile_top_level_expr(&b->p, &e)) {
@@ -162,6 +162,7 @@ bool bokay_interpret(BokayEngine *b) {
   serror_clear(&b->p);
   parser_diag_remaining_exprs(&b->p);
   parser_log_errors(&b->p);
+  diag_types(&b->p.type_defs);
   return result;
 }
 
