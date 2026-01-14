@@ -50,9 +50,9 @@
     fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message);                                                 \
     abort();                                                                                                           \
   } while (0)
-#define TOOLS_UNREACHABLE(message)                                                                                     \
+#define TOOLS_UNREACHABLE(message, ...)                                                                                \
   do {                                                                                                                 \
-    fprintf(stderr, "%s:%d: UNREACHABLE: %s\n", __FILE__, __LINE__, message);                                          \
+    fprintf(stderr, "%s:%d: UNREACHABLE: " message "\n", __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__);               \
     abort();                                                                                                           \
   } while (0)
 
@@ -84,10 +84,11 @@
 // =====================================================
 
 #define SPAN_FIELDS(type)                                                                                              \
-  type *data;                                                                                                          \
-  size_t size;
+  size_t size;                                                                                                         \
+  type *data
 
-#define span_at(span, index) ((span)->data[(index)])
+#define span_ptr(span, index) ((span)->data + (index))
+#define span_at(span, index) (*span_ptr((span), (index)))
 #define span_last(span) ((span)->data[(TOOLS_ASSERT((span)->size > 0), (span)->size - 1)])
 
 #define span_shift(span) shift((span)->data, (span)->size)
@@ -95,7 +96,9 @@
 #define span_chop_back(span, n) (TOOLS_ASSERT((size_t)(n) <= (span)->size), (span)->size -= (n))
 #define span_chop_front(span, n) (span_chop_back((span), (n)), (span)->data += (n))
 
-#define span_for_each(Type, it, span) for (Type *it = (span).data, *end = (span).data + (span).size; it != end; ++it)
+#define span_eq(a, b) ((a).size == (b).size && memcmp((a).data, (b).data, (a).size * sizeof(*(a).data)) == 0)
+
+#define span_for_each(Type, it, span) for (Type *it = (span).data; it < ((span).data + (span).size); ++it)
 
 // =====================================================
 // ===================== END Span ======================
@@ -109,17 +112,15 @@
 #define DA_GROWTH_FACTOR 2
 
 #define DA_FIELDS(type)                                                                                                \
-  SPAN_FIELDS(type)                                                                                                    \
-  size_t capacity;
+  SPAN_FIELDS(type);                                                                                                   \
+  size_t capacity
 
 #define da_reserve(da, cap)                                                                                            \
   do {                                                                                                                 \
     size_t new_cap = (cap);                                                                                            \
     if ((da)->capacity < new_cap) {                                                                                    \
       (da)->capacity = (da)->capacity <= 0 ? DA_INIT_CAP : (da)->capacity;                                             \
-      while ((da)->capacity < new_cap) {                                                                               \
-        (da)->capacity *= DA_GROWTH_FACTOR;                                                                            \
-      }                                                                                                                \
+      while ((da)->capacity < new_cap) { (da)->capacity *= DA_GROWTH_FACTOR; }                                         \
       (da)->data = TOOLS_REALLOC((da)->data, (da)->capacity * sizeof(*(da)->data));                                    \
       TOOLS_ASSERT((da)->data && "get good");                                                                          \
     }                                                                                                                  \
@@ -146,6 +147,8 @@
 #define da_remove_unordered(da, i)                                                                                     \
   (da)->data[(size_t)(i)] = (da)->data[(TOOLS_ASSERT((size_t)(i) < (da)->size), --(da)->size)];
 
+#define da_eq span_eq
+
 #define da_for_each span_for_each
 
 // =====================================================
@@ -157,10 +160,10 @@
 // =====================================================
 
 typedef struct SB {
-  DA_FIELDS(char)
+  DA_FIELDS(char);
 } StringBuilder;
 typedef struct SV {
-  SPAN_FIELDS(char)
+  SPAN_FIELDS(char);
 } StringView;
 
 #define sv_at(sv, index) ((sv).data[(index)])
@@ -231,6 +234,24 @@ TOOLS_DEF StringView sv_trim(StringView sv);
 // =====================================================
 
 // =====================================================
+// =================== Struct Error ====================
+// =====================================================
+
+#define SERROR_FIELDS StringBuilder error
+
+// internal definitions
+#define serrorf(s, fmt, ...) ((void)sb_appendf(&(s)->error, fmt __VA_OPT__(, ) __VA_ARGS__), false)
+#define serror_forwardf(to, from, bridgetext, fmt, ...)                                                                \
+  serrorf((to), fmt bridgetext SB_Fmt, __VA_ARGS__ __VA_OPT__(, ) SB_Arg((from)->error))
+#define serror_causedf(s, fmt, ...) serrorf((s), "\n\tCaused: " fmt __VA_OPT__(, ) __VA_ARGS__)
+#define serror_exists(s) ((s)->error.size > 0)
+#define serror_clear(s) sb_clear(&(s)->error)
+
+// =====================================================
+// ================= END Struct Error ==================
+// =====================================================
+
+// =====================================================
 // ==================== Files / IO =====================
 // =====================================================
 
@@ -251,7 +272,10 @@ typedef enum { TOOLS_TRACE, TOOLS_DEBUG, TOOLS_INFO, TOOLS_WARN, TOOLS_ERROR, TO
 typedef struct ToolsLogOpts {
   const char *prefix;
   const char *debug_label;
+  bool omit_prefix; // level + log_location
+  bool omit_level;
   bool omit_log_location;
+  bool omit_newline;
   const char *file;
   int line;
 } ToolsLogOpts;
@@ -276,7 +300,7 @@ TOOLS_DEF void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char 
 
 #endif // TOOLS_H_
 
-#ifdef TOOLS_IMPLEMENTATION
+#ifdef TOOLS_IMPL
 
 size_t sb_appendf(StringBuilder *sb, const char *fmt, ...) {
   va_list args;
@@ -299,18 +323,14 @@ size_t sb_appendf(StringBuilder *sb, const char *fmt, ...) {
 }
 size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill) {
   size_t padding = (alignment - (sb->size % alignment)) % alignment;
-  for (size_t i = 0; i < padding; ++i) {
-    sb_append(sb, fill);
-  }
+  for (size_t i = 0; i < padding; ++i) { sb_append(sb, fill); }
   return padding;
 }
 StringView sv_new(char *data, size_t size) { return (StringView){.data = data, .size = (size_t)size}; }
 StringView sv_from_cstr(const char *cstr) { return sv_new((char *)cstr, strlen(cstr)); }
 #define sv_from_cstr_lit(cstr) ((StringView){.data = (char *)(cstr), .size = (ARRAY_LEN((cstr)) - 1)})
 StringView sv_prefix(StringView sv, size_t n) {
-  if (n > sv.size) {
-    n = sv.size;
-  }
+  if (n > sv.size) { n = sv.size; }
   return sv_new(sv.data, n);
 }
 bool sv_eq(StringView a, StringView b) { return a.size == b.size && (memcmp(a.data, b.data, a.size) == 0); }
@@ -323,18 +343,14 @@ bool sv_ends_with(StringView sv, const char *suffix) {
   return sv_eq(suffix_sv, sv_chop_back(&sv, suffix_sv.size));
 }
 StringView sv_chop_front(StringView *sv, size_t n) {
-  if (n > sv->size) {
-    n = sv->size;
-  }
+  if (n > sv->size) { n = sv->size; }
   StringView result = {.data = sv->data, .size = n};
   span_chop_front(sv, n);
   return result;
 }
 StringView sv_chop_by_delim(StringView *sv, char delim) {
   size_t i = 0;
-  while (i < sv->size && sv->data[i] != delim) {
-    ++i;
-  }
+  while (i < sv->size && sv->data[i] != delim) { ++i; }
   StringView result = sv_chop_front(sv, i);
   if (sv->size > 0 && sv->data[0] == delim) {
     span_chop_front(sv, 1); // chop the delim
@@ -342,25 +358,19 @@ StringView sv_chop_by_delim(StringView *sv, char delim) {
   return result;
 }
 StringView sv_chop_back(StringView *sv, size_t n) {
-  if (n > sv->size) {
-    n = sv->size;
-  }
+  if (n > sv->size) { n = sv->size; }
   StringView result = {.data = sv->data + (sv->size - n), .size = n};
   span_chop_back(sv, n);
   return result;
 }
 StringView sv_trim_start(StringView sv) {
   size_t start = 0;
-  while (start < sv.size && isspace(sv.data[start])) {
-    ++start;
-  }
+  while (start < sv.size && isspace(sv.data[start])) { ++start; }
   return sv_chop_front(&sv, start);
 }
 StringView sv_trim_end(StringView sv) {
   size_t end = sv.size;
-  while (end > 0 && isspace(sv.data[end - 1])) {
-    --end;
-  }
+  while (end > 0 && isspace(sv.data[end - 1])) { --end; }
   return sv_chop_back(&sv, sv.size - end);
 }
 StringView sv_trim(StringView sv) { return sv_trim_end(sv_trim_start(sv)); }
@@ -411,38 +421,33 @@ tools_log_handler *tools_get_log_handler(void) { return tools__log_handler; }
 ToolsLogLevel tools_logging_min_log_level = TOOLS_INFO;
 char *tools_logging_debug_label = "ALL";
 void tools_default_log_handler(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, va_list args) {
-  if (level < tools_logging_min_log_level) {
-    return;
-  }
+  if (level < tools_logging_min_log_level) { return; }
 
   if (level == TOOLS_DEBUG && tools_logging_debug_label != NULL && opts.debug_label != NULL &&
       strcmp(tools_logging_debug_label, "ALL") != 0 && strcmp(tools_logging_debug_label, opts.debug_label) != 0) {
     return;
   }
 
-  switch (level) {
-  case TOOLS_TRACE: fprintf(stderr, "[TRACE] ");
-  case TOOLS_DEBUG: fprintf(stderr, "[DEBUG] "); break;
-  case TOOLS_INFO: fprintf(stderr, "[INFO]  "); break;
-  case TOOLS_WARN: fprintf(stderr, "[WARN]  "); break;
-  case TOOLS_ERROR: fprintf(stderr, "[ERROR] "); break;
-  case TOOLS_NO_LOGS: return;
-  }
-
-  if (!opts.omit_log_location) {
-    char *fname = opts.file ? (char *)opts.file : "unknown_file";
-    if (strlen(fname) > 20) {
-      fname += strlen(fname) - 20;
+  if (!opts.omit_level && !opts.omit_prefix) {
+    switch (level) {
+    case TOOLS_TRACE: fprintf(stderr, "[TRACE] ");
+    case TOOLS_DEBUG: fprintf(stderr, "[DEBUG] "); break;
+    case TOOLS_INFO: fprintf(stderr, "[INFO]  "); break;
+    case TOOLS_WARN: fprintf(stderr, "[WARN]  "); break;
+    case TOOLS_ERROR: fprintf(stderr, "[ERROR] "); break;
+    case TOOLS_NO_LOGS: return;
     }
+  }
+  if (!opts.omit_log_location && !opts.omit_prefix) {
+    char *fname = opts.file ? (char *)opts.file : "unknown_file";
+    if (strlen(fname) > 20) { fname += strlen(fname) - 20; }
     fprintf(stderr, "[%s:%-4d] ", fname, opts.line);
   }
 
-  if (opts.prefix) {
-    fprintf(stderr, "[%s] ", opts.prefix);
-  }
+  if (opts.prefix) { fprintf(stderr, "[%s] ", opts.prefix); }
 
   vfprintf(stderr, fmt, args);
-  fprintf(stderr, "\n");
+  if (!opts.omit_newline) fprintf(stderr, "\n");
 }
 
 void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...) {
@@ -452,7 +457,7 @@ void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...)
   va_end(args);
 }
 
-#endif // TOOLS_IMPLEMENTATION
+#endif // TOOLS_IMPL
 
 #ifndef TOOLS_STRIP_PREFIX_GUARD_
 #define TOOLS_STRIP_PREFIX_GUARD_

@@ -1,3 +1,12 @@
-printf("Hello from bokay! small %zu %f\n", 4294967295,  134.6964)
-printf("\n\n")
-printf("Hello from bokay! big %zu %f\n", 8589934591, 134.6964)
+type foo = *u8[5,6][2]
+
+type bar = u8[5,6]
+
+type f = u16
+type baz = bar[2]
+
+type bo = *baz
+
+type baz = **foo[33]
+
+type bruh = func (bit: foo, bat: f32) => void;

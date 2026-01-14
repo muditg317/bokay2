@@ -1,4 +1,14 @@
-#define TOOLS_IMPLEMENTATION
+#include <stdio.h>
+
+#define TOOLS_IMPL
 #include "tools.h"
 
-int main() { log(INFO, "%zu", ARRAY_LEN(",)")); }
+typedef struct {
+  SERROR_FIELDS;
+} test;
+
+int main() {
+  test t = {0};
+  bool thing = serror_causedf(&t, "foo");
+  printf("%d\n", thing);
+}

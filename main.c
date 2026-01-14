@@ -10,8 +10,7 @@ int main(int argc, char **argv) {
   const char *filepath = shift(argv, argc);
 
   BokayEngine b;
-  if (!bokay_new(&b, .filepath = filepath))
-    return 1;
+  if (!bokay_new(&b, .filepath = filepath)) return 1;
 
   if (!bokay_interpret(&b)) {
     parser_log_errors(&b.p);
@@ -21,18 +20,18 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#define TOOLS_IMPLEMENTATION
+#define TOOLS_IMPL
 #include "tools.h"
-#undef TOOLS_IMPLEMENTATION
+#undef TOOLS_IMPL
 
-#define LEXER_IMPLEMENTATION
+#define LEXER_IMPL
 #include "lexer.h"
-#undef LEXER_IMPLEMENTATION
+#undef LEXER_IMPL
 
-#define PARSER_IMPLEMENTATION
+#define PARSER_IMPL
 #include "parser.h"
-#undef PARSER_IMPLEMENTATION
+#undef PARSER_IMPL
 
-#define BOKAY_IMPLEMENTATION
+#define BOKAY_IMPL
 #include "bokay.h"
-#undef BOKAY_IMPLEMENTATION
+#undef BOKAY_IMPL

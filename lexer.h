@@ -5,147 +5,166 @@
 
 #define LEXER_LOG_PREFIX "bokay.lexer"
 
-typedef enum TokenKind {
-  TK_Error = -1,
+typedef enum TokenBaseKind {
+  Token_Error = -1,
   // 0-255 reserved for single-character tokens
-  TK_EOF = 256,
-  TK_Ident,
+  Token_EOF = 256,
+  Token_Ident,
 
-  TK_LITERAL_MIN,
-  TK_Literal_Bool = TK_LITERAL_MIN,
-  TK_Literal_Integer,
-  TK_Literal_Float,
-  TK_Literal_Char,
-  TK_Literal_StringSQ, // Single-quoted string
-  TK_Literal_StringDQ, // Double-quoted string
-  TK_LITERAL_MAX = TK_Literal_StringDQ,
+  Token_Literal,
 
-  TK_PUNCT_MIN,
-  TK_Punct_PlusPlus = TK_PUNCT_MIN, // ++
-  TK_Punct_MinusMinus,              // --
-  TK_Punct_Shl,                     // <<
-  TK_Punct_Shr,                     // >>
-  TK_Punct_AndAnd,                  // &&
-  TK_Punct_OrOr,                    // ||
-  TK_Punct_PlusEq,                  // +=
-  TK_Punct_MinusEq,                 // -=
-  TK_Punct_MulEq,                   // *=
-  TK_Punct_DivEq,                   // /=
-  TK_Punct_ModEq,                   // %=
-  TK_Punct_ShlEq,                   // <<=
-  TK_Punct_ShrEq,                   // >>=
-  TK_Punct_EqualEq,                 // ==
-  TK_Punct_NEq,                     // !=
-  TK_Punct_LEq,                     // <=
-  TK_Punct_GEq,                     // >=
-  TK_Punct_AndEq,                   // &=
-  TK_Punct_XorEq,                   // ^=
-  TK_Punct_OrEq,                    // |=
-  TK_Punct_AndAndEq,                // &&=
-  TK_Punct_OrOrEq,                  // ||=
-  TK_Punct_Arrow,                   // ->
-  TK_Punct_WideArrow,               // =>
-  TK_Punct_ColonColon,              // ::
-  TK_PUNCT_MAX = TK_Punct_ColonColon,
+  Token_Punct,
 
-  TK_KEYWORD_MIN,
-  TK_Kw_Return = TK_KEYWORD_MIN,
-  TK_Kw_Type,
-  TK_Kw_Mutable,
-  TK_Kw_Constant,
-  TK_Kw_Func,
-  TK_KEYWORD_MAX = TK_Kw_Func,
+  Token_Keyword,
 
-  TK_COUNT
+  Token_COUNT,
+} TokenBaseKind;
+
+typedef enum TokenLiteralKind {
+  Literal_Bool,
+  Literal_Integer,
+  Literal_Float,
+  Literal_Char,
+  Literal_StringSQ, // Single-quoted string
+  Literal_StringDQ, // Double-quoted string
+
+  LITERAL_COUNT,
+} TokenLiteralKind;
+
+typedef enum TokenPunctKind {
+  Punct_PlusEq,   // +=
+  Punct_MinusEq,  // -=
+  Punct_MulEq,    // *=
+  Punct_DivEq,    // /=
+  Punct_ModEq,    // %=
+  Punct_ShlEq,    // <<=
+  Punct_ShrEq,    // >>=
+  Punct_EqualEq,  // ==
+  Punct_NEq,      // !=
+  Punct_LEq,      // <=
+  Punct_GEq,      // >=
+  Punct_AndEq,    // &=
+  Punct_XorEq,    // ^=
+  Punct_OrEq,     // |=
+  Punct_AndAndEq, // &&=
+  Punct_OrOrEq,   // ||=
+  Punct_LAST_ASSIGN = Punct_OrOrEq,
+  Punct_PlusPlus,   // ++
+  Punct_MinusMinus, // --
+  Punct_Shl,        // <<
+  Punct_Shr,        // >>
+  Punct_AndAnd,     // &&
+  Punct_OrOr,       // ||
+  Punct_Arrow,      // ->
+  Punct_WideArrow,  // =>
+  Punct_ColonColon, // ::
+
+  PUNCT_COUNT,
+} TokenPunctKind;
+
+typedef enum TokenKeywordKind {
+  Keyword_Return,
+  Keyword_Type,
+  Keyword_Mutable,
+  Keyword_Constant,
+  Keyword_Func,
+
+  KEYWORD_COUNT,
+} TokenKeywordKind;
+
+typedef struct TokenKind {
+  TokenBaseKind kind;
+  union {
+    TokenLiteralKind literal;
+    TokenPunctKind punct;
+    TokenKeywordKind kw;
+  } as;
 } TokenKind;
+#define TK_CHAR(tk) ((TokenKind){.kind = (TokenBaseKind)(tk)})
+#define TK_LITERAL(tk) ((TokenKind){.kind = Token_Literal, .as = {.literal = (tk)}})
+#define TK_PUNCT(tk) ((TokenKind){.kind = Token_Punct, .as = {.punct = (tk)}})
+#define TK_KEYWORD(tk) ((TokenKind){.kind = Token_Keyword, .as = {.kw = (tk)}})
 
-const TokenKind TK_Literal_AnyString[2] = {
-  TK_Literal_StringSQ, TK_Literal_StringDQ
+const TokenKind TK_Error = ((TokenKind){.kind = Token_Error});
+const TokenKind TK_EOF = ((TokenKind){.kind = Token_EOF});
+const TokenKind TK_Ident = ((TokenKind){.kind = Token_Ident});
+const TokenKind TK_Literal_Bool = TK_LITERAL(Literal_Bool);
+const TokenKind TK_Literal_Integer = TK_LITERAL(Literal_Integer);
+const TokenKind TK_Literal_Float = TK_LITERAL(Literal_Float);
+const TokenKind TK_Literal_Char = TK_LITERAL(Literal_Char);
+const TokenKind TK_Literal_StringSQ = TK_LITERAL(Literal_StringSQ);
+const TokenKind TK_Literal_StringDQ = TK_LITERAL(Literal_StringDQ);
+const TokenKind TK_Punct_PlusEq = TK_PUNCT(Punct_PlusEq);
+const TokenKind TK_Punct_MinusEq = TK_PUNCT(Punct_MinusEq);
+const TokenKind TK_Punct_MulEq = TK_PUNCT(Punct_MulEq);
+const TokenKind TK_Punct_DivEq = TK_PUNCT(Punct_DivEq);
+const TokenKind TK_Punct_ModEq = TK_PUNCT(Punct_ModEq);
+const TokenKind TK_Punct_ShlEq = TK_PUNCT(Punct_ShlEq);
+const TokenKind TK_Punct_ShrEq = TK_PUNCT(Punct_ShrEq);
+const TokenKind TK_Punct_EqualEq = TK_PUNCT(Punct_EqualEq);
+const TokenKind TK_Punct_NEq = TK_PUNCT(Punct_NEq);
+const TokenKind TK_Punct_LEq = TK_PUNCT(Punct_LEq);
+const TokenKind TK_Punct_GEq = TK_PUNCT(Punct_GEq);
+const TokenKind TK_Punct_AndEq = TK_PUNCT(Punct_AndEq);
+const TokenKind TK_Punct_XorEq = TK_PUNCT(Punct_XorEq);
+const TokenKind TK_Punct_OrEq = TK_PUNCT(Punct_OrEq);
+const TokenKind TK_Punct_AndAndEq = TK_PUNCT(Punct_AndAndEq);
+const TokenKind TK_Punct_OrOrEq = TK_PUNCT(Punct_OrOrEq);
+const TokenKind TK_Punct_LAST_ASSIGN = TK_PUNCT(Punct_LAST_ASSIGN);
+const TokenKind TK_Punct_PlusPlus = TK_PUNCT(Punct_PlusPlus);
+const TokenKind TK_Punct_MinusMinus = TK_PUNCT(Punct_MinusMinus);
+const TokenKind TK_Punct_Shl = TK_PUNCT(Punct_Shl);
+const TokenKind TK_Punct_Shr = TK_PUNCT(Punct_Shr);
+const TokenKind TK_Punct_AndAnd = TK_PUNCT(Punct_AndAnd);
+const TokenKind TK_Punct_OrOr = TK_PUNCT(Punct_OrOr);
+const TokenKind TK_Punct_Arrow = TK_PUNCT(Punct_Arrow);
+const TokenKind TK_Punct_WideArrow = TK_PUNCT(Punct_WideArrow);
+const TokenKind TK_Punct_ColonColon = TK_PUNCT(Punct_ColonColon);
+const TokenKind TK_Keyword_Return = TK_KEYWORD(Keyword_Return);
+const TokenKind TK_Keyword_Type = TK_KEYWORD(Keyword_Type);
+const TokenKind TK_Keyword_Mutable = TK_KEYWORD(Keyword_Mutable);
+const TokenKind TK_Keyword_Constant = TK_KEYWORD(Keyword_Constant);
+const TokenKind TK_Keyword_Func = TK_KEYWORD(Keyword_Func);
+
+const TokenKind TK_Literal_AnyString[2] = {TK_LITERAL(Literal_StringSQ), TK_LITERAL(Literal_StringDQ)};
+static_assert(LITERAL_COUNT == 6, "token literal count changed");
+const TokenKind TK_Literal_Any[LITERAL_COUNT] = {
+    [Literal_Bool] = TK_LITERAL(Literal_Bool),         [Literal_Integer] = TK_LITERAL(Literal_Integer),
+    [Literal_Float] = TK_LITERAL(Literal_Float),       [Literal_Char] = TK_LITERAL(Literal_Char),
+    [Literal_StringSQ] = TK_LITERAL(Literal_StringSQ), [Literal_StringDQ] = TK_LITERAL(Literal_StringDQ),
 };
-const TokenKind TK_Literal_Any[TK_LITERAL_MAX-TK_LITERAL_MIN+1] = {
-  [-TK_LITERAL_MIN+TK_Literal_Bool] = TK_Literal_Bool,
-  [-TK_LITERAL_MIN+TK_Literal_Integer] = TK_Literal_Integer,
-  [-TK_LITERAL_MIN+TK_Literal_Float] = TK_Literal_Float,
-  [-TK_LITERAL_MIN+TK_Literal_Char] = TK_Literal_Char,
-  [-TK_LITERAL_MIN+TK_Literal_StringSQ] = TK_Literal_StringSQ,
-  [-TK_LITERAL_MIN+TK_Literal_StringDQ] = TK_Literal_StringDQ,
+
+const TokenKind TK_Keyword_AnyTypeModifier[2] = {TK_KEYWORD(Keyword_Mutable), TK_KEYWORD(Keyword_Constant)};
+
+static_assert(PUNCT_COUNT == 25, "token punct count changed");
+const char *puncts[PUNCT_COUNT] = {
+    [Punct_PlusPlus] = "++",  [Punct_MinusMinus] = "--", [Punct_Shl] = "<<",    [Punct_Shr] = ">>",
+    [Punct_AndAnd] = "&&",    [Punct_OrOr] = "||",       [Punct_PlusEq] = "+=", [Punct_MinusEq] = "-=",
+    [Punct_MulEq] = "*=",     [Punct_DivEq] = "/=",      [Punct_ModEq] = "%=",  [Punct_ShlEq] = "<<=",
+    [Punct_ShrEq] = ">>=",    [Punct_EqualEq] = "==",    [Punct_NEq] = "!=",    [Punct_LEq] = "<=",
+    [Punct_GEq] = ">=",       [Punct_AndEq] = "&=",      [Punct_XorEq] = "^=",  [Punct_OrEq] = "|=",
+    [Punct_AndAndEq] = "&&=", [Punct_OrOrEq] = "||=",    [Punct_Arrow] = "->",  [Punct_WideArrow] = "=>",
+    [Punct_ColonColon] = "::"};
+
+static_assert(KEYWORD_COUNT == 5, "token keyword count changed");
+const char *keywords[KEYWORD_COUNT] = {
+    [Keyword_Return] = "return",  [Keyword_Type] = "type", [Keyword_Mutable] = "mut",
+    [Keyword_Constant] = "const", [Keyword_Func] = "func",
 };
 
-const char *puncts[TK_PUNCT_MAX - TK_PUNCT_MIN + 1] = {
-    [-TK_PUNCT_MIN + TK_Punct_PlusPlus] = "++",  [-TK_PUNCT_MIN + TK_Punct_MinusMinus] = "--",
-    [-TK_PUNCT_MIN + TK_Punct_Shl] = "<<",       [-TK_PUNCT_MIN + TK_Punct_Shr] = ">>",
-    [-TK_PUNCT_MIN + TK_Punct_AndAnd] = "&&",    [-TK_PUNCT_MIN + TK_Punct_OrOr] = "||",
-    [-TK_PUNCT_MIN + TK_Punct_PlusEq] = "+=",    [-TK_PUNCT_MIN + TK_Punct_MinusEq] = "-=",
-    [-TK_PUNCT_MIN + TK_Punct_MulEq] = "*=",     [-TK_PUNCT_MIN + TK_Punct_DivEq] = "/=",
-    [-TK_PUNCT_MIN + TK_Punct_ModEq] = "%=",     [-TK_PUNCT_MIN + TK_Punct_ShlEq] = "<<=",
-    [-TK_PUNCT_MIN + TK_Punct_ShrEq] = ">>=",    [-TK_PUNCT_MIN + TK_Punct_EqualEq] = "==",
-    [-TK_PUNCT_MIN + TK_Punct_NEq] = "!=",       [-TK_PUNCT_MIN + TK_Punct_LEq] = "<=",
-    [-TK_PUNCT_MIN + TK_Punct_GEq] = ">=",       [-TK_PUNCT_MIN + TK_Punct_AndEq] = "&=",
-    [-TK_PUNCT_MIN + TK_Punct_XorEq] = "^=",     [-TK_PUNCT_MIN + TK_Punct_OrEq] = "|=",
-    [-TK_PUNCT_MIN + TK_Punct_AndAndEq] = "&&=", [-TK_PUNCT_MIN + TK_Punct_OrOrEq] = "||=",
-    [-TK_PUNCT_MIN + TK_Punct_Arrow] = "->",     [-TK_PUNCT_MIN + TK_Punct_WideArrow] = "=>",
-    [-TK_PUNCT_MIN + TK_Punct_ColonColon] = "::"};
-
-const char *keywords[TK_KEYWORD_MAX - TK_KEYWORD_MIN + 1] = {
-    [-TK_KEYWORD_MIN + TK_Kw_Return] = "return",
-    [-TK_KEYWORD_MIN + TK_Kw_Type] = "type",
-    [-TK_KEYWORD_MIN + TK_Kw_Mutable] = "mut",
-    [-TK_KEYWORD_MIN + TK_Kw_Constant] = "const",
-    [-TK_KEYWORD_MIN + TK_Kw_Func] = "func",
-};
-
-static_assert(TK_COUNT == 255 + 39, "TokenKind enum changed");
-const char *token_kind_to_str(TokenKind kind) {
-  if (kind >= 0 && kind <= 255) {
-    static char buf[4] = {'\'', 0, '\'', 0};
-    buf[1] = (char)kind;
-    return buf;
-  }
-  if (kind >= TK_LITERAL_MIN && kind <= TK_LITERAL_MAX) {
-    switch (kind) {
-    case TK_Literal_Bool:
-      return "TK_Literal_Bool";
-    case TK_Literal_Integer:
-      return "TK_Literal_Integer";
-    case TK_Literal_Float:
-      return "TK_Literal_Float";
-    case TK_Literal_Char:
-      return "TK_Literal_Char";
-    case TK_Literal_StringSQ:
-      return "TK_Literal_StringSQ";
-    case TK_Literal_StringDQ:
-      return "TK_Literal_StringDQ";
-    default:
-      TOOLS_UNREACHABLE("Unknown literal token kind");
-    }
-  }
-  if (kind >= TK_PUNCT_MIN && kind <= TK_PUNCT_MAX) {
-    return puncts[(size_t)(kind - TK_PUNCT_MIN)];
-  }
-  if (kind >= TK_KEYWORD_MIN && kind <= TK_KEYWORD_MAX) {
-    return keywords[(size_t)(kind - TK_KEYWORD_MIN)];
-  }
-  switch (kind) {
-  case TK_Error:
-    return "TK_Error";
-  case TK_EOF:
-    return "TK_EOF";
-  case TK_Ident:
-    return "TK_Ident";
-  default:
-    TOOLS_UNREACHABLE("Unknown token kind");
-  }
-}
+const char *token_kind_to_str(TokenKind kind);
+bool token_kind_eq(TokenKind a, TokenKind b);
 
 typedef struct LexLoc {
   const char *filepath;
   size_t line;
   size_t column;
 } LexLoc;
-#define LEX_LOC_Fmt "%s:%zu:%-4zu"
-#define LEX_LOC_Arg(loc) (loc).filepath, (loc).line, (loc).column
+#define LOC_Fmt "%s:%zu:%-4zu"
+#define LOC_Arg(loc) (loc).filepath, (loc).line, (loc).column
 
-#define lexer_advance_loc(loc, n) ((LexLoc){.filepath = (loc).filepath, .line = (loc).line, .column = (loc).column + (n)})
+#define lexer_advance_loc(loc, n)                                                                                      \
+  ((LexLoc){.filepath = (loc).filepath, .line = (loc).line, .column = (loc).column + (n)})
 
 typedef struct Token {
   TokenKind kind;
@@ -167,6 +186,7 @@ bool token_is_oneof(Token t, const TokenKind *tks, size_t tk_count);
 typedef struct LexerState {
   StringView source;
   LexLoc loc;
+  size_t error_size;
 } LexerState;
 
 typedef struct LexerOpts {
@@ -179,45 +199,38 @@ typedef struct Lexer {
   StringView source;
   LexLoc loc;
 
-  StringBuilder error;
+  SERROR_FIELDS;
 } Lexer;
 
 // Lexer API
 Lexer lexer_new_opt(StringView source, LexerOpts opts);
 #define lexer_new(source, ...) lexer_new_opt((source), (LexerOpts){__VA_ARGS__})
 
-
 bool lexer_get_token(Lexer *l, Token *t);
+bool lexer_expect_token(Lexer *l, Token *t); // Disallows EOF
 bool lexer_expect(Lexer *l, Token t, TokenKind tk);
 bool lexer_expect_oneof(Lexer *l, Token t, const TokenKind *tks, size_t tk_count);
-#define lexer_expect_from_cstr(l, t, cstr) lexer_expect_oneof((l), (t), (const TokenKind *)(cstr), strlen((cstr))-1)
+#define lexer_expect_from_cstr(l, t, cstr) lexer_expect_oneof((l), (t), (const TokenKind *)(cstr), strlen((cstr)) - 1)
 #define lexer_expect_from_array(l, t, arr) lexer_expect_oneof((l), (t), (arr), ARRAY_LEN((arr)))
 bool lexer_get_and_expect(Lexer *l, Token *t, TokenKind tk);
 bool lexer_get_and_expect_oneof(Lexer *l, Token *t, const TokenKind *tks, size_t tk_count);
-#define lexer_get_and_expect_from_cstr(l, t, cstr) lexer_get_and_expect_oneof((l), (t), (const TokenKind *)(cstr), strlen((cstr))-1)
+bool lexer_get_and_expect_from_cstr(Lexer *l, Token *t, const char *cstr);
 #define lexer_get_and_expect_from_array(l, t, arr) lexer_get_and_expect_oneof((l), (t), (arr), ARRAY_LEN((arr)))
+#define lexer_get_and_expect_any(l, t, n, ...) lexer_get_and_expect_from_array((l), (t), (TokenKind[(n)]){__VA_ARGS__})
 #define lexer_loc(l) ((l)->loc)
-#define lexer_has_error(l) ((l)->error.size > 0)
-#define lexer_clear_error(l) sb_clear(&(l)->error)
 void lexer_log_errors(Lexer *l);
 LexerState lexer_save(Lexer *l);
 void lexer_restore(Lexer *l, LexerState state);
 
 void lexer_diag_remaining_tokens(Lexer *l);
 #define lexer_diag_tok(level, l, t)                                                                                    \
-  log(level, LEX_LOC_Fmt ": [%s] " SV_Fmt, LEX_LOC_Arg((t).loc), token_kind_to_str((t).kind),      \
-      SV_Arg((t).text))
+  log(level, LOC_Fmt ": [%s] " SV_Fmt, LOC_Arg((t).loc), token_kind_to_str((t).kind), SV_Arg((t).text))
 
 // internal definitions
-#define lexer_errorf(l, fmt, ...) sb_appendf(&(l)->error, fmt __VA_OPT__(,) __VA_ARGS__)
-#define lexer__start_error(l, loc, fmt, ...)                                                                           \
-  lexer_errorf((l), LEX_LOC_Fmt ": " fmt, LEX_LOC_Arg((loc)) __VA_OPT__(, ) __VA_ARGS__)
-#define lexer__continue_error(l, fmt, ...) lexer_errorf((l), fmt __VA_OPT__(, ) __VA_ARGS__)
-#define lexer__finish_error(l, fmt, ...) lexer_errorf((l), fmt "\n" __VA_OPT__(, ) __VA_ARGS__)
-#define lexer__report_error_at_loc(l, loc, fmt, ...)                                                                   \
-  (lexer__start_error((l), (loc), fmt __VA_OPT__(, ) __VA_ARGS__), lexer__finish_error((l), ""))
-#define lexer__report_error(l, offset, fmt, ...)                                                                       \
-  lexer__report_error_at_loc((l), lexer_advance_loc((l)->loc, (offset)), fmt __VA_OPT__(, ) __VA_ARGS__)
+#define serror_locf_start(s, loc, fmt, ...) serrorf((s), LOC_Fmt ": " fmt, LOC_Arg((loc)) __VA_OPT__(, ) __VA_ARGS__)
+#define serror_locf_finish(s, fmt, ...) serrorf((s), fmt "\n" __VA_OPT__(, ) __VA_ARGS__)
+#define serror_locf(s, loc, fmt, ...)                                                                                  \
+  (serror_locf_start((s), (loc), fmt __VA_OPT__(, ) __VA_ARGS__), serror_locf_finish((s), ""))
 
 bool lexer__skip_whitespace(Lexer *l);
 bool lexer__skip_comment(Lexer *l);
@@ -225,16 +238,57 @@ bool lexer__skip_comment(Lexer *l);
 bool lexer__is_ident_start(char c) { return isalpha(c) || c == '_'; }
 bool lexer__is_ident(char c) { return isalnum(c) || c == '_'; }
 
-
 #endif // LEXER_H_
 
-#ifdef LEXER_IMPLEMENTATION
+#ifdef LEXER_IMPL
 
-void token_reset(Token *t) { sb_free(&t->lit_string); memset(t, 0, sizeof(*t)); }
+static_assert(Token_COUNT == 255 + 6, "TokenKind enum changed");
+const char *token_kind_to_str(TokenKind kind) {
+  TokenBaseKind base = kind.kind;
+  if (base >= 0 && base <= 255) {
+    static char buf[4] = {'\'', 0, '\'', 0};
+    buf[1] = (char)base;
+    return buf;
+  }
+  if (base == Token_Literal) {
+    switch (kind.as.literal) {
+    case Literal_Bool: return "Literal_Bool";
+    case Literal_Integer: return "Literal_Integer";
+    case Literal_Float: return "Literal_Float";
+    case Literal_Char: return "Literal_Char";
+    case Literal_StringSQ: return "Literal_StringSQ";
+    case Literal_StringDQ: return "Literal_StringDQ";
+    default: TOOLS_UNREACHABLE("Unknown literal token kind");
+    }
+  }
+  if (base == Token_Punct) { return puncts[kind.as.punct]; }
+  if (base == Token_Keyword) { return keywords[kind.as.kw]; }
+  switch (base) {
+  case Token_Error: return "Token_Error";
+  case Token_EOF: return "Token_EOF";
+  case Token_Ident: return "Token_Ident";
+  default: TOOLS_UNREACHABLE("Unknown token kind");
+  }
+}
+
+bool token_kind_eq(TokenKind a, TokenKind b) {
+  if (a.kind != b.kind) return false;
+  switch (a.kind) {
+  case Token_Literal: return a.as.literal == b.as.literal;
+  case Token_Punct: return a.as.punct == b.as.punct;
+  case Token_Keyword: return a.as.kw == b.as.kw;
+  default: return true;
+  }
+}
+
+void token_reset(Token *t) {
+  sb_free(&t->lit_string);
+  memset(t, 0, sizeof(*t));
+}
 bool token_is(Token t, TokenKind tk) { return token_is_oneof(t, &tk, 1); }
 bool token_is_oneof(Token t, const TokenKind *tks, size_t tk_count) {
   for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
-    if (t.kind == *tk) return true;
+    if (token_kind_eq(t.kind, *tk)) return true;
   }
   return false;
 }
@@ -251,9 +305,7 @@ Lexer lexer_new_opt(StringView source, LexerOpts opts) {
 }
 
 bool lexer__skip_whitespace(Lexer *l) {
-  if (l->source.size <= 0) {
-    return false;
-  }
+  if (l->source.size <= 0) { return false; }
   StringView whitespace = sv_trim_left(l->source);
   sv_for_each(it, whitespace) {
     if (*it == '\n') {
@@ -268,19 +320,13 @@ bool lexer__skip_whitespace(Lexer *l) {
 }
 
 bool lexer__skip_comment(Lexer *l) {
-  if (l->opts.keep_comments) {
-    return false;
-  }
+  if (l->opts.keep_comments) { return false; }
   if (l->source.size <= 1) { // Comments need at least 2 chars // or /**/
     return false;
   }
   char buf[2] = {sv_at(l->source, 0), sv_at(l->source, 1)};
-  if (buf[0] != '/') {
-    return false;
-  }
-  if (buf[1] != '/' && buf[1] != '*') {
-    return false;
-  }
+  if (buf[0] != '/') { return false; }
+  if (buf[1] != '/' && buf[1] != '*') { return false; }
   sv_chop_front_ignore(&l->source, 1);
   if (buf[1] == '/') { // Single-line comment
     sv_chop_by_delim(&l->source, '\n');
@@ -315,27 +361,21 @@ bool lexer_get_token(Lexer *l, Token *t) {
   token_reset(t);
 
   size_t error_start = l->error.size;
-  while (lexer__skip_whitespace(l) || lexer__skip_comment(l)) {
-  }
-
-  if (l->source.size <= 0) {
-    return false;
-  }
+  while (lexer__skip_whitespace(l) || lexer__skip_comment(l)) {}
 
   t->kind = TK_EOF;
   t->loc = l->loc;
-  size_t tok_len = 0;
-
+  if (l->source.size <= 0) { return true; } // EOF is valid token
 
   char c = l->source.data[0];
-  t->kind = c; // Default to single-character token
-  tok_len = 1;
+  t->kind = TK_CHAR(c); // Default to single-character token
+  size_t tok_len = 1;
 
   // Check for multi-character punctuators
-  for (size_t tk_punct = 0; tk_punct < TK_PUNCT_MAX - TK_PUNCT_MIN; ++tk_punct) {
+  for (size_t tk_punct = 0; tk_punct < PUNCT_COUNT; ++tk_punct) {
     const char *punct = puncts[tk_punct];
     if (sv_starts_with(l->source, punct)) {
-      t->kind = (TokenKind)(TK_PUNCT_MIN + tk_punct);
+      t->kind = TK_PUNCT(tk_punct);
       tok_len = strlen(punct);
       goto finish_token;
     }
@@ -344,7 +384,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
   // Numeric literals
   if (isdigit(c)) {
     t->kind = TK_Literal_Integer;
-    t->lit_int = c-'0';
+    t->lit_int = c - '0';
     size_t mantissa = 0;
     size_t mantisa_div = 1;
     // Consume numeric literal characters
@@ -352,17 +392,17 @@ bool lexer_get_token(Lexer *l, Token *t) {
       char nc = l->source.data[tok_len];
       if (isdigit(nc)) {
         tok_len++;
-        if (t->kind == TK_Literal_Integer) {
-          t->lit_int = t->lit_int*10 + nc-'0';
+        if (token_is(*t, TK_Literal_Integer)) {
+          t->lit_int = t->lit_int * 10 + nc - '0';
         } else {
-          mantissa = mantissa*10 + nc-'0';
+          mantissa = mantissa * 10 + nc - '0';
           mantisa_div *= 10;
         }
       } else if (!l->opts.no_float_literals) { // Handle float literals
         if (nc == '.') {
-          if (t->kind == TK_Literal_Float) {
-            lexer__report_error(l, (tok_len + 1), "Float literal cannot have two decimal points (got %.*s)",
-                                (int)(tok_len + 1), l->source.data);
+          if (token_is(*t, TK_Literal_Float)) {
+            serror_locf(l, lexer_advance_loc(l->loc, tok_len + 1),
+                        "Float literal cannot have two decimal points (got %.*s)", (int)(tok_len + 1), l->source.data);
             goto finish_token;
           }
           t->kind = TK_Literal_Float;
@@ -374,8 +414,8 @@ bool lexer_get_token(Lexer *l, Token *t) {
         break;
       }
     }
-    if (t->kind == TK_Literal_Float) {
-      t->lit_float = t->lit_int + (double)mantissa/mantisa_div;
+    if (token_is(*t, TK_Literal_Float)) {
+      t->lit_float = t->lit_int + (double)mantissa / mantisa_div;
       t->lit_int = 0;
     }
   }
@@ -404,9 +444,11 @@ bool lexer_get_token(Lexer *l, Token *t) {
       goto finish_token;
     }
     // Check if identifier is a keyword
-    for (size_t tk_keyword = 0; tk_keyword < TK_KEYWORD_MAX - TK_KEYWORD_MIN + 1; ++tk_keyword) {
+    logx(DEBUG, (.debug_label = "keywords"), "check if kw: " SV_Fmt, SV_Arg(sv_prefix(l->source, tok_len)));
+    for (size_t tk_keyword = 0; tk_keyword < KEYWORD_COUNT; ++tk_keyword) {
+      logx(TRACE, (.debug_label = "keywords"), "check kw %s", keywords[tk_keyword]);
       if (sv_eq_cstr(sv_prefix(l->source, tok_len), keywords[tk_keyword])) {
-        t->kind = (TokenKind)(TK_KEYWORD_MIN + tk_keyword);
+        t->kind = TK_KEYWORD(tk_keyword);
         break;
       }
     }
@@ -435,27 +477,13 @@ bool lexer_get_token(Lexer *l, Token *t) {
         tok_len += 2;
         endLoc.column += 2;
         switch (sv_at(l->source, tok_len - 1)) {
-        case 'n':
-          sb_append(&t->lit_string, '\n');
-          break;
-        case 't':
-          sb_append(&t->lit_string, '\t');
-          break;
-        case 'r':
-          sb_append(&t->lit_string, '\r');
-          break;
-        case '\\':
-          sb_append(&t->lit_string, '\\');
-          break;
-        case '\'':
-          sb_append(&t->lit_string, '\'');
-          break;
-        case '"':
-          sb_append(&t->lit_string, '"');
-          break;
-        default:
-          sb_append(&t->lit_string, sv_at(l->source, tok_len - 1));
-          break;
+        case 'n': sb_append(&t->lit_string, '\n'); break;
+        case 't': sb_append(&t->lit_string, '\t'); break;
+        case 'r': sb_append(&t->lit_string, '\r'); break;
+        case '\\': sb_append(&t->lit_string, '\\'); break;
+        case '\'': sb_append(&t->lit_string, '\''); break;
+        case '"': sb_append(&t->lit_string, '"'); break;
+        default: sb_append(&t->lit_string, sv_at(l->source, tok_len - 1)); break;
         }
       } else if (nc == quote_char) {
         closed = true;
@@ -473,8 +501,7 @@ bool lexer_get_token(Lexer *l, Token *t) {
       }
     }
     if (!closed) {
-      lexer__report_error_at_loc(l, endLoc, "Unterminated %s. Started at " LEX_LOC_Fmt, token_kind_to_str(t->kind),
-                                 LEX_LOC_Arg(l->loc));
+      serror_locf(l, endLoc, "Unterminated %s. Started at " LOC_Fmt, token_kind_to_str(t->kind), LOC_Arg(l->loc));
     }
     goto finish_token;
   }
@@ -484,8 +511,18 @@ finish_token:
     t->text = sv_chop_front(&l->source, tok_len);
     l->loc.column += tok_len;
   }
-  if (l->error.size <= error_start) t->kind = TK_Error;
+  if (l->error.size > error_start) t->kind = TK_Error;
+  logx(DEBUG, (.debug_label = "token"), "Got token: %s = `" SV_Fmt "`", token_kind_to_str(t->kind), SV_Arg(t->text));
   return l->error.size <= error_start;
+}
+
+bool lexer_expect_token(Lexer *l, Token *t) {
+  if (!lexer_get_token(l, t)) return false;
+  if (token_is(*t, TK_EOF)) {
+    serror_locf(l, t->loc, "Unexpected EOF. Expected token");
+    return false;
+  }
+  return true;
 }
 
 bool lexer_expect(Lexer *l, Token t, TokenKind tk) { return lexer_expect_oneof(l, t, &tk, 1); }
@@ -493,56 +530,50 @@ bool lexer_expect(Lexer *l, Token t, TokenKind tk) { return lexer_expect_oneof(l
 bool lexer_expect_oneof(Lexer *l, Token t, const TokenKind *tks, size_t tk_count) {
   if (token_is_oneof(t, tks, tk_count)) return true;
 
-  lexer__start_error(l, t.loc, "Expected one of {");
+  serror_locf_start(l, t.loc, "Expected one of {");
   for (const TokenKind *tk = tks; tk < tks + tk_count; ++tk) {
-    lexer__continue_error(l, "%s", token_kind_to_str(*tk));
-    if (tk + 1 < tks + tk_count)
-      lexer__continue_error(l, " or ");
+    serrorf(l, "%s", token_kind_to_str(*tk));
+    if (tk + 1 < tks + tk_count) serrorf(l, " or ");
   }
-  lexer__finish_error(l, "}, but got %s", token_kind_to_str(t.kind));
+  serror_locf_finish(l, "}, but got %s", token_kind_to_str(t.kind));
   return false;
 }
 
 bool lexer_get_and_expect(Lexer *l, Token *t, TokenKind tk) {
-  if (!lexer_get_token(l, t)) {
-    return false;
-  }
+  if (!lexer_get_token(l, t)) { return false; }
   return lexer_expect(l, *t, tk);
 }
 
 bool lexer_get_and_expect_oneof(Lexer *l, Token *t, const TokenKind *tks, size_t tk_count) {
-  if (!lexer_get_token(l, t)) {
-    return false;
-  }
+  if (!lexer_get_token(l, t)) { return false; }
   return lexer_expect_oneof(l, *t, tks, tk_count);
 }
 
-void lexer_log_errors(Lexer *l) {
-  if (lexer_has_error(l)) {
-    log(ERROR, "Lexer errors:\n" SV_Fmt, SV_Arg(l->error));
+bool lexer_get_and_expect_from_cstr(Lexer *l, Token *t, const char *cstr) {
+  if (!lexer_get_token(l, t)) { return false; }
+  for (const char *c = cstr; *c != '\0'; c++) {
+    if (token_is(*t, TK_CHAR(*c))) return true;
   }
+  return false;
+}
+
+void lexer_log_errors(Lexer *l) {
+  if (serror_exists(l)) { log(ERROR, "Lexer errors:\n" SV_Fmt, SV_Arg(l->error)); }
 }
 
 LexerState lexer_save(Lexer *l) {
-  return (LexerState){
-    .source=l->source,
-    .loc=l->loc
-  };
+  return (LexerState){.source = l->source, .loc = l->loc, .error_size = l->error.size};
 }
 
 void lexer_restore(Lexer *l, LexerState s) {
   l->source = s.source;
   l->loc = s.loc;
+  l->error.size = s.error_size;
 }
 
 void lexer_diag_remaining_tokens(Lexer *l) {
   Token t;
-  while (lexer_get_token(l, &t)) {
-    lexer_diag_tok(INFO, l, t);
-    // if (t.kind == TK_EOF) {
-    //   break;
-    // }
-  }
+  while (lexer_expect_token(l, &t)) { lexer_diag_tok(INFO, l, t); }
 }
 
-#endif // LEXER_IMPLEMENTATION
+#endif // LEXER_IMPL
