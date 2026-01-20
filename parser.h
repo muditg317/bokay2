@@ -24,6 +24,7 @@ typedef enum {
   // EK_Addr, (unary)
   EK_Variable,
   EK_Literal,
+  EK_FunctionLiteral,
   // statements
   EK_Definition,
   EK_Return,
@@ -58,6 +59,7 @@ typedef struct ExprAssignment {
   TokenKind op;
   Expr *rhs;
 } ExprAssignment;
+
 typedef struct ExprTernary {
   Expr *cond;
   Expr *iftrue;
@@ -77,24 +79,26 @@ typedef struct ExprIndex {
   Expr *ptr;
   Exprs indices;
 } ExprIndex;
+
 typedef struct ExprUnaryOp {
   TokenKind op;
   Expr *arg;
 } ExprUnaryOp;
-// typedef struct ExprDeref {
 
-// } ExprDeref;
-// typedef struct ExprAddr {
-
-// } ExprAddr;
 typedef struct ExprVariable {
   StringView name;
 } ExprVariable;
+
 typedef struct ExprLiteral {
   TokenLiteralKind kind;
   LiteralValue value;
 } ExprLiteral;
+typedef struct ExprFunctionLiteral {
+  TypeRef signature;
+  ExprBlock body;
+} ExprFunctionLiteral;
 
+// statements
 typedef struct ExprDefinition {
   Variable var;
   Expr *rhs;
@@ -129,14 +133,12 @@ struct Expr {
     ExprIndex index;
     ExprFuncCall funcall;
     ExprUnaryOp unaryop;
-    // ExprDeref deref;
-    // ExprAddr addr;
     ExprVariable variable;
     ExprLiteral literal;
+    ExprFunctionLiteral function_literal;
 
     ExprDefinition definition;
     ExprReturn return_;
-    // ExprTypeDef typedef_;
   } as;
 };
 
@@ -233,6 +235,7 @@ bool parser_compile_postfix_expr(Parser *p, Expr *expr);
 bool parser_compile_funcall(Parser *p, Expr func, Expr *expr);
 bool parser_compile_index(Parser *p, Expr ptr, Expr *expr);
 bool parser_compile_primary_expr(Parser *p, Expr *expr);
+bool parser_compile_function_literal(Parser *p, Expr *expr, bool skip_signature);
 
 // __VA_ARGS__ is optional "on_empty" expression
 #define parser_compile_until(p, opt_delim, until, on_geterror, get_next, on_entry, ...)                                \
@@ -265,7 +268,7 @@ bool parser_compile_primary_expr(Parser *p, Expr *expr);
 #define TYPE_PARSER_IMPL
 #include "type_parser.h"
 
-static_assert(EK_COUNT == 15, "ExprKind changed count");
+static_assert(EK_COUNT == 16, "ExprKind changed count");
 const char *expr_kind_to_str(ExprKind ek) {
   switch (ek) {
   case EK_Error: return "EK_Error";
@@ -279,13 +282,11 @@ const char *expr_kind_to_str(ExprKind ek) {
   case EK_FuncCall: return "EK_FuncCall";
   case EK_Index: return "EK_Index";
   case EK_UnaryOp: return "EK_UnaryOp";
-  // case EK_Deref: return "EK_Deref";
-  // case EK_Addr: return "EK_Addr";
   case EK_Variable: return "EK_Variable";
   case EK_Literal: return "EK_Literal";
+  case EK_FunctionLiteral: return "EK_FunctionLiteral";
   case EK_Definition: return "EK_Definition";
   case EK_Return: return "EK_Return";
-  // case EK_TypeDef: return "EK_TypeDef";
   default: UNREACHABLE("ExprKind. Got %d", ek);
   }
 }
@@ -398,22 +399,42 @@ bool parser_compile_expr_or_statement(Parser *p, Expr *expr) {
           expr->kind = EK_Definition;
           expr->loc = t.loc;
           expr_remove_type(expr);
-          lexer_maybe_consume_tok(
-              p->l, TK_CHAR('='), ({
-                Expr rhs = {0};
-                if (!parser_compile_expr(p, &rhs)) {
-                  return_defer(
-                      serror_causedf(p, "Couldn't compile initialization expression expected after `=` at " LOC_Fmt ".",
-                                     LOC_Arg(t.loc)));
-                }
-                expr->as.definition.rhs = expr_copy(&rhs);
-              }),
-              ({ return_defer(false); }));
+          TypeDef *type = span_ptr(&p->type_defs, expr->as.definition.var.type);
+          if (type->kind == Type_Func) {
+            // TODO: function tags
+            char ocurly = '{';
+            lexer_maybe_consume_tok_full(
+                p->l, s, open, toks_as_array(1, TK_CHAR(ocurly)), 1, ({
+                  lexer_restore(p->l, s); // unconsume '{' before parsing function literal
+                  Expr rhs = {0};
+                  rhs.text = open.text;
+                  rhs.loc = open.loc;
+                  if (!parser_compile_function_literal(p, &rhs, /*skip_signature*/ true)) {
+                    return_defer(serror_causedf(
+                        p, "Couldn't compile function definition block expected at " LOC_Fmt ".", LOC_Arg(expr->loc)));
+                  }
+                  expr->as.definition.rhs = expr_copy(&rhs);
+                }),
+                ({ return_defer(false); }));
+          } else {
+            lexer_maybe_consume_tok(
+                p->l, TK_CHAR('='), ({
+                  Expr rhs = {0};
+                  if (!parser_compile_expr(p, &rhs)) {
+                    return_defer(serror_causedf(
+                        p, "Couldn't compile initialization expression expected after `=` at " LOC_Fmt ".",
+                        LOC_Arg(t.loc)));
+                  }
+                  expr->as.definition.rhs = expr_copy(&rhs);
+                }),
+                ({ return_defer(false); }));
+          }
           return_defer(true);
         }
       }), );
   return_defer(parser_compile_expr(p, expr));
 defer:
+  if (start_tok.text.data) expr->loc = start_tok.loc;
   if (!expr->text.data) { expr->text = sv_new(start_tok.text.data, p->l->source.data - start_tok.text.data); }
   if (result) { lexer_maybe_consume_tok(p->l, TK_CHAR(';'), (expr_remove_type(expr), expr->text.size++), ); }
   logx(DEBUG, (.debug_label = "expr"), "finished exprstmt parse: " SV_Fmt, SV_Arg(expr->text));
@@ -464,8 +485,10 @@ bool parser_compile_block(Parser *p, Expr *expr) {
 
   Expr curr_expr = {0};
   parser_compile_until(p, NULL, TK_CHAR('}'), ({ return false; }),
-                       (curr_expr = ((Expr){0}), parser_compile_expr_or_statement(p, &curr_expr)),
-                       ({ da_push(&expr->as.block.exprs, curr_expr); }));
+                       (curr_expr = ((Expr){0}), parser_compile_expr_or_statement(p, &curr_expr)), ({
+                         da_push(&expr->as.block.exprs, curr_expr);
+                         sv_extend_to_endof(&expr->text, curr_expr.text);
+                       }));
 
   logx(DEBUG, (.debug_label = "expr_block"), "got %zu exprs", expr->as.block.exprs.size);
 
@@ -615,8 +638,9 @@ bool parser_compile_postfix_expr(Parser *p, Expr *expr) {
   Token t = {0};
   if (!lexer_get_token(p->l, &t))
     return parser__fwd_lex_errorf(p, "Failed to compile postfix expr (funcall()/index[]).");
-  while (token_is_oneof_array(t, toks_as_array(2, TK_CHAR('('), TK_CHAR('[')))) {
-    if (token_is(t, TK_CHAR('('))) {
+  static char oparen = '(';
+  while (token_is_oneof_array(t, toks_as_array(2, TK_CHAR(oparen), TK_CHAR('[')))) {
+    if (token_is(t, TK_CHAR(oparen))) {
       if (!parser_compile_funcall(p, *expr, expr))
         return serror_causedf(p, "Couldn't compile function call expected by `(` at " LOC_Fmt ".", LOC_Arg(t.loc));
     } else if (token_is(t, TK_CHAR('['))) {
@@ -661,10 +685,12 @@ bool parser_compile_primary_expr(Parser *p, Expr *expr) {
     if (!parser_compile_expr(p, expr)) return false;
     expr->loc = t.loc;
     expr->text = t.text;
-    if (!lexer_get_and_expect(p->l, &t, TK_CHAR((char)41))) { // ascii 41 == ')'
-      return parser__fwd_lex_errorf(p, "Needed by `(` at " LOC_Fmt ".", LOC_Arg(expr->loc));
+    Token close = {0};
+    if (!lexer_get_and_expect(p->l, &close, TK_CHAR((char)41))) { // ascii 41 == ')'
+      return parser__fwd_lex_errorf(p, "Needed by `(` at " LOC_Fmt ".", LOC_Arg(close.loc));
     }
-    sv_extend_to_endof(&expr->text, t.text);
+    expr->text = t.text;
+    sv_extend_to_endof(&expr->text, close.text);
     return true;
   } else if (token_is_oneof_array(t, TK_Punct_AnyUnary)) { // -neg, *deref, &addr, !not
     expr->kind = EK_UnaryOp;
@@ -690,8 +716,39 @@ bool parser_compile_primary_expr(Parser *p, Expr *expr) {
     expr->text = t.text;
     expr->as.variable.name = t.text;
     return true;
+  } else if (token_is(t, TK_Keyword_Func)) {
+    expr->loc = t.loc;
+    expr->text = t.text;
+    if (!parser_compile_function_literal(p, expr, false))
+      return serror_causedf(p, "Failed to compile function literal expected by `func` at " LOC_Fmt ".", LOC_Arg(t.loc));
+    return true;
   }
   return serror_locf(p, t.loc, "Unexpected token: %s (" SV_Fmt ").", token_kind_to_str(t.kind), SV_Arg(t.text));
+}
+
+bool parser_compile_function_literal(Parser *p, Expr *expr, bool skip_signature) {
+  expr->kind = EK_FunctionLiteral;
+
+  if (!skip_signature) {
+    if (!type_parser_compile_func_type(p, &expr->as.function_literal.signature))
+      return serror_causedf(p, "Failed to compile function signature needed in function literal at " LOC_Fmt ".",
+                            LOC_Arg(expr->loc));
+  }
+  expr->type.base = expr->as.function_literal.signature;
+  expr->type.not_assignable = true;
+
+  Token t = {0};
+  if (!lexer_get_and_expect(p->l, &t, TK_CHAR('{')))
+    return parser__fwd_lex_errorf(p, "Failed to compile function literal at " LOC_Fmt ".", LOC_Arg(expr->loc));
+
+  Expr body = {0};
+  body.text = t.text;
+  if (!parser_compile_block(p, &body))
+    return serror_causedf(p, "Couldn't compile function literal body started at " LOC_Fmt ".", LOC_Arg(expr->loc));
+  expr->as.function_literal.body = body.as.block;
+  sv_extend_to_endof(&expr->text, body.text);
+
+  return true;
 }
 
 size_t binop_precedence(TokenKind op) {
@@ -801,6 +858,12 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
     }
     printf(SV_Fmt "\n", SV_Arg(e->text));
   } break;
+  case EK_FunctionLiteral: {
+    sb_clear(&sb);
+    typedef_to_str(dict, span_ptr(dict, e->as.function_literal.signature), &sb);
+    printf(" [signature=" SB_Fmt "] [body: %zu exprs]:\n", SB_Arg(sb), e->as.function_literal.body.exprs.size);
+    span_for_each(Expr, be, e->as.function_literal.body.exprs) { debug_expr(dict, be, level + 1); }
+  } break;
   // statements
   case EK_Definition: {
     sb_clear(&sb);
@@ -812,7 +875,11 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
     } else printf("\n");
   } break;
   case EK_Return: {
-
+    sb_clear(&sb);
+    typedef_to_str(dict, span_ptr(dict, e->as.return_.value->type.base), &sb);
+    printf(" [type=" SB_Fmt "]", SB_Arg(sb));
+    printf(" = %s\n", expr_kind_to_str(e->as.return_.value->kind));
+    debug_expr(dict, e->as.return_.value, level + 1);
   } break;
   default: break;
   }
