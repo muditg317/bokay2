@@ -5,11 +5,11 @@
 //    access with WholeLib::oneMethod(...)
 import WholeLib, {oneMethod, aField, anotherMethod} from "./export-stuff.bokay";
 
-u8 hello = aField + 2;
-s16 doThing(u8 a, u8 b) {
+hello: u8 = aField + 2;
+s16 doThing(a: u8, b: u8) {
   return a + b;
 }
-f32 result = doThing(WholeLib::indirectMethod(hello), oneMethod(hello));
+result: f32 = doThing(WholeLib::indirectMethod(hello), oneMethod(hello));
 
 // TODO: exports:
 //  export { method, someField, anotherMethod };

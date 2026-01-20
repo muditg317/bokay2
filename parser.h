@@ -64,7 +64,9 @@ typedef struct ExprTernary {
   Expr *iffalse;
 } ExprTernary;
 typedef struct ExprBinOp {
-
+  Expr *lhs;
+  TokenKind op;
+  Expr *rhs;
 } ExprBinOp;
 
 typedef struct ExprFuncCall {
@@ -107,7 +109,7 @@ typedef struct ExprReturn {
 // The `Type` of an `Expr`.
 typedef struct Type {
   TypeRef base;
-  bool lvalue;
+  bool not_assignable;
 } Type;
 
 // All `Expr`s must live on heap!
@@ -197,6 +199,21 @@ void parser_diag_remaining_exprs(Parser *p);
 #define parser__fwd_lex_errorf(p, fmt, ...)                                                                            \
   serror_forwardf((p), (p)->l, "\n\t^ Due to lexer error: ", fmt __VA_OPT__(, ) __VA_ARGS__)
 
+#define MAX_BINOP_PRECEDENCE 6
+const struct {
+  SPAN_FIELDS(TokenKind);
+} binops_by_precedence[MAX_BINOP_PRECEDENCE] = {
+    span_lit(TokenKind, TK_PUNCT(Punct_AndAnd), TK_PUNCT(Punct_OrOr)),
+    span_lit(TokenKind, TK_PUNCT(Punct_EqEqEq), TK_PUNCT(Punct_EqEq), TK_PUNCT(Punct_NEq), TK_PUNCT(Punct_LEq),
+             TK_PUNCT(Punct_GEq), TK_CHAR('<'), TK_CHAR('>')),
+    span_lit(TokenKind, TK_PUNCT(Punct_Shl), TK_PUNCT(Punct_Shr)),
+    span_lit(TokenKind, TK_CHAR('+'), TK_CHAR('-')),
+    span_lit(TokenKind, TK_CHAR('*'), TK_CHAR('/'), TK_CHAR('%')),
+    span_lit(TokenKind, TK_CHAR('^')),
+};
+
+size_t binop_precedence(TokenKind op);
+
 bool parser_compile_typedef(Parser *p, LexLoc typedef_loc, TypeRef *type);
 bool parser_compile_expr_or_statement(Parser *p, Expr *expr);
 typedef struct CompileExprOpts {
@@ -277,13 +294,13 @@ void expr_reset(Expr *e) { memset(e, 0, sizeof(*e)); }
 void expr_reset_as(Expr *e) { memset(&e->as, 0, sizeof(e->as)); }
 Expr *expr_copy(Expr *e) { return memdup(e); }
 
-const Type UNTYPED = (Type){.base = BAD_TYPE_REF, .lvalue = false};
+const Type UNTYPED = (Type){.base = BAD_TYPE_REF, .not_assignable = true};
 bool expr_is_typed(Expr *e) {
   return memcmp(&e->type, &UNTYPED, sizeof(e->type)) != 0;
   // bool result = memcmp(&e->type, &UNTYPED, sizeof(e->type)) != 0;
-  // log(INFO, "check typed: %p = (%zu, %s) -- %s", e, e->type.base, e->type.lvalue ? "lval" : "rval",
+  // log(INFO, "check typed: %p = (%zu, %s) -- %s", e, e->type.base, e->type.not_assignable ? "rval" : "lval",
   //     result ? "typed" : "untyped");
-  // log(INFO, "untyped ref = (%zu, %s)", UNTYPED.base, UNTYPED.lvalue ? "lval" : "rval");
+  // log(INFO, "untyped ref = (%zu, %s)", UNTYPED.base, UNTYPED.not_assignable ? "rval" : "lval");
   // return result;
 }
 void expr_remove_type(Expr *e) { memcpy(&e->type, &UNTYPED, sizeof(e->type)); }
@@ -379,6 +396,7 @@ bool parser_compile_expr_or_statement(Parser *p, Expr *expr) {
           lexer_restore(p->l, s);
         } else {
           expr->kind = EK_Definition;
+          expr->loc = t.loc;
           expr_remove_type(expr);
           lexer_maybe_consume_tok(
               p->l, TK_CHAR('='), ({
@@ -420,7 +438,7 @@ bool parser_compile_expr_opt(Parser *p, Expr *expr, CompileExprOpts opts) {
   else if (token_is(t, TK_Keyword_Return)) return_defer(serror_locf(p, t.loc, "`return` only allowed as statement."));
   else if (token_is(t, TK_Keyword_Type)) return_defer(serror_locf(p, t.loc, "`type` only allowed at top level."));
   else if (token_is(t, TK_Ident)) { // maybe definition
-    expr->type.base = EK_Definition;
+    // expr->type.base = EK_Definition;
     ParserState ps = parser_save(p);
     if (!parser_compile_variable(p, t, &expr->as.definition.var)) { // captures `: <type>`.
       parser_restore(p, ps);
@@ -442,7 +460,7 @@ defer:
 
 bool parser_compile_block(Parser *p, Expr *expr) {
   expr->kind = EK_Block;
-  expr->type.lvalue = false;
+  expr->type.not_assignable = true;
 
   Expr curr_expr = {0};
   parser_compile_until(p, NULL, TK_CHAR('}'), ({ return false; }),
@@ -456,7 +474,7 @@ bool parser_compile_block(Parser *p, Expr *expr) {
 
 bool parser_compile_if(Parser *p, Expr *expr) {
   expr->kind = EK_If;
-  expr->type.lvalue = false;
+  expr->type.not_assignable = true;
   Expr cond = {0};
   Expr then = {0};
   Expr *else_ptr = NULL;
@@ -479,7 +497,7 @@ bool parser_compile_if(Parser *p, Expr *expr) {
 
 bool parser_compile_while(Parser *p, Expr *expr) {
   expr->kind = EK_While;
-  expr->type.lvalue = false;
+  expr->type.not_assignable = true;
   Expr cond = {0};
   Expr loop = {0};
   if (!parser_compile_expr(p, &cond))
@@ -519,8 +537,9 @@ bool parser_compile_assignment(Parser *p, Expr *expr) {
   if (!parser_compile_binop(p, 0, expr)) return false;
   lexer_maybe_consume_tok_full(
       p->l, s, t, TK_Punct_AnyAssign, ARRAY_LEN(TK_Punct_AnyAssign), ({
-        if (!expr->type.lvalue) {
-          return serror_locf(p, t.loc, "Cannot assign to non-rvalue at " LOC_Fmt ".", expr->loc);
+        if (expr->type.not_assignable) {
+          return serror_locf(p, t.loc, "Cannot assign to non-assignable at " LOC_Fmt ": " SV_Fmt ".", expr->loc,
+                             SV_Arg(expr->text));
         }
         Expr rhs = {0};
         if (!parser_compile_assignment(p, &rhs)) {
@@ -561,19 +580,32 @@ bool parser_compile_ternary(Parser *p, LexLoc tern_loc, Expr cond, Expr *expr) {
 }
 
 bool parser_compile_binop(Parser *p, size_t precedence, Expr *expr) {
-  if (precedence >= max_binop_precedence) return parser_compile_postfix_expr(p, expr);
-  // lhs = parser_compile_binop(p, precedence + 1, expr); // capture all higher precedence binops
-  // LexerState s = lexer_save(p->l);
-  // get_token();
-  // while (op = expect_binop(tok) && binop_precedence(op) == precedence) { // build chain at precedence
-  //   rhs = parser_compile_binop(p, precedence + 1, expr);                 // capture higher
-  //   precendence within chain lhs = binop(lhs, op, rhs);
-  //   s = lexer_save(p->l);
-  //   get_token();
-  // }
-  // lexer_restore(p->l, s);
-  // return lhs;
-  return serrorf(p, "TODO");
+  if (precedence >= MAX_BINOP_PRECEDENCE) return parser_compile_postfix_expr(p, expr);
+  // capture all higher precedence binops
+  if (!parser_compile_binop(p, precedence + 1, expr)) return false;
+  LexerState s = lexer_save(p->l);
+  Token t = {0};
+  if (!lexer_get_token(p->l, &t)) return parser__fwd_lex_errorf(p, "Failed to lex maybe binop.");
+
+  // build chain at precedence
+  while (token_is_oneof_array(t, TK_Binop_Any) && binop_precedence(t.kind) == precedence) {
+    Expr rhs = {0};
+    // capture higher precendence within chain
+    if (!parser_compile_binop(p, precedence + 1, &rhs))
+      return serror_causedf(p, "Failed to compile rhs of binop expected by `%s` at " LOC_Fmt ".",
+                            token_kind_to_str(t.kind), LOC_Arg(t.loc));
+    expr->as.binop = (ExprBinOp){
+        .lhs = expr_copy(expr),
+        .op = t.kind,
+        .rhs = expr_copy(&rhs),
+    };
+    expr->kind = EK_BinOp;
+    sv_extend_to_endof(&expr->text, rhs.text);
+    s = lexer_save(p->l);
+    if (!lexer_get_token(p->l, &t)) return parser__fwd_lex_errorf(p, "Failed to lex maybe binop.");
+  }
+  lexer_restore(p->l, s);
+  return true;
 }
 
 bool parser_compile_postfix_expr(Parser *p, Expr *expr) {
@@ -604,8 +636,10 @@ bool parser_compile_funcall(Parser *p, Expr func, Expr *expr) {
   expr->as.funcall.func = expr_copy(&func);
   Expr param = {0};
   TokenKind delim = TK_CHAR(',');
-  parser_compile_until(p, &delim, TK_CHAR(')'), ({ return false; }), (parser_compile_expr(p, &param)),
-                       ({ da_push(&expr->as.funcall.params, param); }), );
+  parser_compile_until(p, &delim, TK_CHAR(')'), ({ return false; }), (parser_compile_expr(p, &param)), ({
+                         da_push(&expr->as.funcall.params, param);
+                         sv_extend_to_endof(&expr->text, param.text);
+                       }), );
   return true;
 }
 bool parser_compile_index(Parser *p, Expr ptr, Expr *expr) {
@@ -613,45 +647,31 @@ bool parser_compile_index(Parser *p, Expr ptr, Expr *expr) {
   expr->as.index.ptr = expr_copy(&ptr);
   Expr index = {0};
   TokenKind delim = TK_CHAR(',');
-  parser_compile_until(p, &delim, TK_CHAR(']'), ({ return false; }), (parser_compile_expr(p, &index)),
-                       ({ da_push(&expr->as.index.indices, index); }), );
+  parser_compile_until(p, &delim, TK_CHAR(']'), ({ return false; }), (parser_compile_expr(p, &index)), ({
+                         da_push(&expr->as.index.indices, index);
+                         sv_extend_to_endof(&expr->text, index.text);
+                       }), );
   return true;
 }
-
-// bool parser_compile_expr_list_until(Parser *p, delim, Expr *expr) {
-//   Exprs exprs;
-
-//   LexerState s = lexer_save(p->l);
-//   get_token();
-//   if (tok == delim) return exprs;
-//   lexer_restore(p->l, s);
-
-//   while (expr = parser_compile_expr(p, expr)) {
-//     push(exprs, expr);
-//     get_and_expect(',', delim);
-//     if (',') continue;
-//     else break;
-//   }
-
-//   return exprs;
-// }
 
 bool parser_compile_primary_expr(Parser *p, Expr *expr) {
   Token t = {0};
   if (!lexer_get_token(p->l, &t)) return false;
   if (token_is(t, TK_CHAR('('))) {
-    LexLoc open_loc = t.loc;
     if (!parser_compile_expr(p, expr)) return false;
     expr->loc = t.loc;
+    expr->text = t.text;
     if (!lexer_get_and_expect(p->l, &t, TK_CHAR((char)41))) { // ascii 41 == ')'
-      return parser__fwd_lex_errorf(p, "Needed by `(` at " LOC_Fmt ".", LOC_Arg(open_loc));
+      return parser__fwd_lex_errorf(p, "Needed by `(` at " LOC_Fmt ".", LOC_Arg(expr->loc));
     }
     sv_extend_to_endof(&expr->text, t.text);
     return true;
   } else if (token_is_oneof_array(t, TK_Punct_AnyUnary)) { // -neg, *deref, &addr, !not
     expr->kind = EK_UnaryOp;
-    Expr arg;
-    if (!parser_compile_expr(p, &arg))
+    expr->loc = t.loc;
+    expr->text = t.text;
+    Expr arg = {0};
+    if (!parser_compile_primary_expr(p, &arg))
       return serror_causedf(p, "Couldn't compile arg for unary op `%c` at " LOC_Fmt ".", t.kind.kind, LOC_Arg(t.loc));
     expr->as.unaryop.op = t.kind;
     expr->as.unaryop.arg = expr_copy(&arg);
@@ -659,15 +679,28 @@ bool parser_compile_primary_expr(Parser *p, Expr *expr) {
     return true;
   } else if (token_is_oneof_array(t, TK_Literal_Any)) {
     expr->kind = EK_Literal;
+    expr->loc = t.loc;
+    expr->text = t.text;
     expr->as.literal.kind = t.kind.as.literal;
     expr->as.literal.value = t.lit;
     return true;
   } else if (token_is(t, TK_Ident)) {
     expr->kind = EK_Variable;
+    expr->loc = t.loc;
+    expr->text = t.text;
     expr->as.variable.name = t.text;
     return true;
   }
   return serror_locf(p, t.loc, "Unexpected token: %s (" SV_Fmt ").", token_kind_to_str(t.kind), SV_Arg(t.text));
+}
+
+size_t binop_precedence(TokenKind op) {
+  for (size_t precedence = 0; precedence < MAX_BINOP_PRECEDENCE; precedence++) {
+    span_for_each(TokenKind, binop, binops_by_precedence[precedence]) {
+      if (token_kind_eq(*binop, op)) return precedence;
+    }
+  }
+  return -1;
 }
 
 void parser_log_errors(Parser *p) {
@@ -684,15 +717,91 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
   StringBuilder sb = {0};
   if (expr_is_typed(e)) typedef_to_str(dict, span_ptr(dict, e->type.base), &sb);
   printf("[" LOC_Fmt "]\t%zu:%*s[%-15.*s %s]%s: ", LOC_Arg(e->loc), level, (int)level * 4, "", (int)sb.size, sb.data,
-         e->type.lvalue ? "lval" : "rval", expr_kind_to_str(e->kind));
+         e->type.not_assignable ? "rval" : "lval", expr_kind_to_str(e->kind));
   switch (e->kind) {
   case EK_Empty: {
     printf("|" SV_Fmt "|\n", SV_Arg(e->text));
   } break;
+  // expressions
   case EK_Block: {
     printf("%zu exprs:\n", e->as.block.exprs.size);
     span_for_each(Expr, be, e->as.block.exprs) { debug_expr(dict, be, level + 1); }
   } break;
+  case EK_If: {
+    printf("if (%s) then{%s}", expr_kind_to_str(e->as.if_.cond->kind), expr_kind_to_str(e->as.if_.then->kind));
+    if (e->as.if_.else_) printf(" else{%s}", expr_kind_to_str(e->as.if_.else_->kind));
+    printf("\n");
+    debug_expr(dict, e->as.if_.cond, level + 1);
+    debug_expr(dict, e->as.if_.then, level + 1);
+    if (e->as.if_.else_) debug_expr(dict, e->as.if_.else_, level + 1);
+  } break;
+  case EK_While: {
+    printf("while (%s) loop{%s}\n", expr_kind_to_str(e->as.while_.cond->kind),
+           expr_kind_to_str(e->as.while_.loop->kind));
+    debug_expr(dict, e->as.while_.cond, level + 1);
+    debug_expr(dict, e->as.while_.loop, level + 1);
+  } break;
+  case EK_Assignment: {
+    printf("apply assignment: %s `%s` %s\n", expr_kind_to_str(e->as.assignment.lhs->kind),
+           token_kind_to_str(e->as.assignment.op), expr_kind_to_str(e->as.assignment.rhs->kind));
+    debug_expr(dict, e->as.assignment.lhs, level + 1);
+    debug_expr(dict, e->as.assignment.rhs, level + 1);
+  } break;
+  case EK_Ternary: {
+    printf("apply ternary: cond=%s iftrue=%s iffalse=%s\n", expr_kind_to_str(e->as.ternary.cond->kind),
+           expr_kind_to_str(e->as.ternary.iftrue->kind), expr_kind_to_str(e->as.ternary.iffalse->kind));
+    debug_expr(dict, e->as.ternary.cond, level + 1);
+    debug_expr(dict, e->as.ternary.iftrue, level + 1);
+    debug_expr(dict, e->as.ternary.iffalse, level + 1);
+  } break;
+  case EK_BinOp: {
+    printf("apply binop: %s `%s` %s\n", expr_kind_to_str(e->as.binop.lhs->kind), token_kind_to_str(e->as.binop.op),
+           expr_kind_to_str(e->as.binop.rhs->kind));
+    debug_expr(dict, e->as.binop.lhs, level + 1);
+    debug_expr(dict, e->as.binop.rhs, level + 1);
+  } break;
+  case EK_FuncCall: {
+    printf("call %s with %zu params\n", expr_kind_to_str(e->as.funcall.func->kind), e->as.funcall.params.size);
+    debug_expr(dict, e->as.funcall.func, level + 1);
+    da_for_each(Expr, param, e->as.funcall.params) { debug_expr(dict, param, level + 1); }
+  } break;
+  case EK_Index: {
+    printf("index into %s with %zu indices\n", expr_kind_to_str(e->as.index.ptr->kind), e->as.index.indices.size);
+    debug_expr(dict, e->as.index.ptr, level + 1);
+    da_for_each(Expr, index, e->as.index.indices) { debug_expr(dict, index, level + 1); }
+  } break;
+  case EK_UnaryOp: {
+    printf("apply unary: `%s` %s\n", token_kind_to_str(e->as.unaryop.op), expr_kind_to_str(e->as.unaryop.arg->kind));
+    debug_expr(dict, e->as.unaryop.arg, level + 1);
+  } break;
+  case EK_Variable: {
+    printf(SV_Fmt "\n", SV_Arg(e->as.variable.name));
+  } break;
+  case EK_Literal: {
+    switch (e->as.literal.kind) {
+    case Literal_Bool: {
+      printf("Literal_Bool: ");
+    } break;
+    case Literal_Integer: {
+      printf("Literal_Integer: ");
+    } break;
+    case Literal_Float: {
+      printf("Literal_Float: ");
+    } break;
+    case Literal_Char: {
+      printf("Literal_Char: ");
+    } break;
+    case Literal_StringSQ: {
+      printf("Literal_StringS: ");
+    } break;
+    case Literal_StringDQ: {
+      printf("Literal_StringDQ: ");
+    } break;
+    default: UNREACHABLE("literal kind in debug_expr %d", e->as.literal.kind);
+    }
+    printf(SV_Fmt "\n", SV_Arg(e->text));
+  } break;
+  // statements
   case EK_Definition: {
     sb_clear(&sb);
     typedef_to_str(dict, span_ptr(dict, e->as.definition.var.type), &sb);
@@ -701,6 +810,9 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
       printf(" = %s\n", expr_kind_to_str(e->as.definition.rhs->kind));
       debug_expr(dict, e->as.definition.rhs, level + 1);
     } else printf("\n");
+  } break;
+  case EK_Return: {
+
   } break;
   default: break;
   }

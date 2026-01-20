@@ -56,6 +56,7 @@
     abort();                                                                                                           \
   } while (0)
 
+#define TOOLS_AS_ARRAY(Type, n, ...) ((Type[(n)]){__VA_ARGS__})
 #define TOOLS_ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
 #define TOOLS_ARRAY_GET(array, index) (TOOLS_ASSERT((size_t)(index) < TOOLS_ARRAY_LEN(array)), array[(size_t)(index)])
 
@@ -133,6 +134,9 @@ void *memdup_impl(void *src, size_t n);
 #define SPAN_FIELDS(type)                                                                                              \
   size_t size;                                                                                                         \
   type *data
+
+#define span_lit(Type, ...)                                                                                            \
+  { .size = TOOLS_NARGS(__VA_ARGS__), .data = ((Type[TOOLS_NARGS(__VA_ARGS__)]){__VA_ARGS__}) }
 
 #define span_ptr(span, index) ((span)->data + (index))
 #define span_at(span, index) (*span_ptr((span), (index)))
@@ -376,7 +380,7 @@ size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill) {
 }
 StringView sv_new(char *data, size_t size) { return (StringView){.data = data, .size = (size_t)size}; }
 StringView sv_from_cstr(const char *cstr) { return sv_new((char *)cstr, strlen(cstr)); }
-#define sv_from_cstr_lit(cstr) ((StringView){.data = (char *)(cstr), .size = (ARRAY_LEN((cstr)) - 1)})
+#define sv_from_cstr_lit(cstr) ((StringView){.data = (char *)(cstr), .size = (TOOLS_ARRAY_LEN((cstr)) - 1)})
 StringView sv_prefix(StringView sv, size_t n) {
   if (n > sv.size) { n = sv.size; }
   return sv_new(sv.data, n);
@@ -514,6 +518,7 @@ void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...)
 #define UNUSED TOOLS_UNUSED
 #define TODO TOOLS_TODO
 #define UNREACHABLE TOOLS_UNREACHABLE
+#define AS_ARRAY TOOLS_AS_ARRAY
 #define ARRAY_LEN TOOLS_ARRAY_LEN
 #define ARRAY_GET TOOLS_ARRAY_GET
 #define COMBINE TOOLS_COMBINE

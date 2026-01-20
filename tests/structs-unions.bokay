@@ -4,20 +4,20 @@
 //    0 initialized
 //  unions  : {base type} union {new_name} { [{type} {name};]... }
 //    access unions with .
-//    auto-assume base type of union if . not used - enables using u64 as u16[4] or something
+//    auto-assume base type of union if . not used - enables using as: u64 u16[4] or something
 struct my_struct {
-  u16 unsigned16;
-  s32 number;
+  unsigned16: u16;
+  number: s32;
 };
 my_struct struct_var; // can't be initialized for now (defaults to 0 initialized)
 struct_var.unsigned16 = 1452;
 struct_var.number = -23441;
 u64 union my_union {
-  f32 height;
-  u32 chunks[2];
-  u16 small_chunks[4];
+  height: f32;
+  chunks: u32[2];
+  small_chunks: u16[4];
 };
 my_union union_var = 100; // simply has to be assignable to one of the components or the base type
-u64 a_number = union_var; // automatically assumes base type when not specified
-f64 big_float = union_var.height; // must specify which type to extract with since multiple options are assignable to f64
-u32 small_num = union_var.chunks[0]; // must specify which type to use when extracting value
+a_number: u64 = union_var; // automatically assumes base type when not specified
+big_float: f64 = union_var.height; // must specify which type to extract with since multiple options are assignable to f64
+small_num: u32 = union_var.chunks[0]; // must specify which type to use when extracting value

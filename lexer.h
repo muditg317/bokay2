@@ -39,16 +39,17 @@ typedef enum TokenPunctKind {
   Punct_ModEq,    // %=
   Punct_ShlEq,    // <<=
   Punct_ShrEq,    // >>=
-  Punct_EqualEq,  // ==
-  Punct_NEq,      // !=
-  Punct_LEq,      // <=
-  Punct_GEq,      // >=
   Punct_AndEq,    // &=
   Punct_XorEq,    // ^=
   Punct_OrEq,     // |=
   Punct_AndAndEq, // &&=
   Punct_OrOrEq,   // ||=
   Punct_LAST_ASSIGN = Punct_OrOrEq,
+  Punct_EqEqEq,     // ===
+  Punct_EqEq,       // ==
+  Punct_NEq,        // !=
+  Punct_LEq,        // <=
+  Punct_GEq,        // >=
   Punct_PlusPlus,   // ++
   Punct_MinusMinus, // --
   Punct_Shl,        // <<
@@ -87,7 +88,7 @@ typedef struct TokenKind {
 #define TK_LITERAL(tk) ((TokenKind){.kind = Token_Literal, .as = {.literal = (tk)}})
 #define TK_PUNCT(tk) ((TokenKind){.kind = Token_Punct, .as = {.punct = (tk)}})
 #define TK_KEYWORD(tk) ((TokenKind){.kind = Token_Keyword, .as = {.kw = (tk)}})
-#define toks_as_array(n, ...) ((TokenKind[(n)]){__VA_ARGS__})
+#define toks_as_array(n, ...) AS_ARRAY(TokenKind, n __VA_OPT__(, ) __VA_ARGS__)
 
 const TokenKind TK_Error = ((TokenKind){.kind = Token_Error});
 const TokenKind TK_EOF = ((TokenKind){.kind = Token_EOF});
@@ -105,7 +106,8 @@ const TokenKind TK_Punct_DivEq = TK_PUNCT(Punct_DivEq);
 const TokenKind TK_Punct_ModEq = TK_PUNCT(Punct_ModEq);
 const TokenKind TK_Punct_ShlEq = TK_PUNCT(Punct_ShlEq);
 const TokenKind TK_Punct_ShrEq = TK_PUNCT(Punct_ShrEq);
-const TokenKind TK_Punct_EqualEq = TK_PUNCT(Punct_EqualEq);
+const TokenKind TK_Punct_EqEqEq = TK_PUNCT(Punct_EqEqEq);
+const TokenKind TK_Punct_EqEq = TK_PUNCT(Punct_EqEq);
 const TokenKind TK_Punct_NEq = TK_PUNCT(Punct_NEq);
 const TokenKind TK_Punct_LEq = TK_PUNCT(Punct_LEq);
 const TokenKind TK_Punct_GEq = TK_PUNCT(Punct_GEq);
@@ -140,15 +142,20 @@ const TokenKind TK_Literal_Any[LITERAL_COUNT] = {
     [Literal_StringSQ] = TK_LITERAL(Literal_StringSQ), [Literal_StringDQ] = TK_LITERAL(Literal_StringDQ),
 };
 
-const TokenKind TK_Punct_AnyAssign[Punct_LAST_ASSIGN + 1] = {
-    [Punct_PlusEq] = TK_PUNCT(Punct_PlusEq),     [Punct_MinusEq] = TK_PUNCT(Punct_MinusEq),
-    [Punct_MulEq] = TK_PUNCT(Punct_MulEq),       [Punct_DivEq] = TK_PUNCT(Punct_DivEq),
-    [Punct_ModEq] = TK_PUNCT(Punct_ModEq),       [Punct_ShlEq] = TK_PUNCT(Punct_ShlEq),
-    [Punct_ShrEq] = TK_PUNCT(Punct_ShrEq),       [Punct_EqualEq] = TK_PUNCT(Punct_EqualEq),
-    [Punct_NEq] = TK_PUNCT(Punct_NEq),           [Punct_LEq] = TK_PUNCT(Punct_LEq),
-    [Punct_GEq] = TK_PUNCT(Punct_GEq),           [Punct_AndEq] = TK_PUNCT(Punct_AndEq),
-    [Punct_XorEq] = TK_PUNCT(Punct_XorEq),       [Punct_OrEq] = TK_PUNCT(Punct_OrEq),
-    [Punct_AndAndEq] = TK_PUNCT(Punct_AndAndEq), [Punct_OrOrEq] = TK_PUNCT(Punct_OrOrEq),
+const TokenKind TK_Punct_AnyAssign[Punct_LAST_ASSIGN + 1 + 1] = {
+    [Punct_PlusEq] = TK_PUNCT(Punct_PlusEq),
+    [Punct_MinusEq] = TK_PUNCT(Punct_MinusEq),
+    [Punct_MulEq] = TK_PUNCT(Punct_MulEq),
+    [Punct_DivEq] = TK_PUNCT(Punct_DivEq),
+    [Punct_ModEq] = TK_PUNCT(Punct_ModEq),
+    [Punct_ShlEq] = TK_PUNCT(Punct_ShlEq),
+    [Punct_ShrEq] = TK_PUNCT(Punct_ShrEq),
+    [Punct_AndEq] = TK_PUNCT(Punct_AndEq),
+    [Punct_XorEq] = TK_PUNCT(Punct_XorEq),
+    [Punct_OrEq] = TK_PUNCT(Punct_OrEq),
+    [Punct_AndAndEq] = TK_PUNCT(Punct_AndAndEq),
+    [Punct_OrOrEq] = TK_PUNCT(Punct_OrOrEq),
+    TK_CHAR('='),
 };
 
 const TokenKind TK_Punct_AnyUnary[4] = {
@@ -158,31 +165,43 @@ const TokenKind TK_Punct_AnyUnary[4] = {
     TK_CHAR('!'),
 };
 
-const TokenKind TK_Binop_Any[10] = {
-    TK_CHAR('^'),                                               // 1
-    TK_CHAR('*'),           TK_CHAR('/'),         TK_CHAR('%'), // 2
-    TK_CHAR('+'),           TK_CHAR('-'),                       // 3
-    TK_PUNCT(Punct_Shl),    TK_PUNCT(Punct_Shr),                // 4
-    TK_PUNCT(Punct_AndAnd), TK_PUNCT(Punct_OrOr),               // 5
-};
-const size_t max_binop_precedence = 0; // 5;
-const struct {
-  SPAN_FIELDS(TokenKind);
-} binops_by_precedence[0] = {
-
+const TokenKind TK_Binop_Any[17] = {
+    // 0
+    TK_PUNCT(Punct_AndAnd),
+    TK_PUNCT(Punct_OrOr),
+    // 1
+    TK_PUNCT(Punct_EqEqEq),
+    TK_PUNCT(Punct_EqEq),
+    TK_PUNCT(Punct_NEq),
+    TK_PUNCT(Punct_LEq),
+    TK_PUNCT(Punct_GEq),
+    TK_CHAR('<'),
+    TK_CHAR('>'),
+    // 1.5
+    TK_PUNCT(Punct_Shl),
+    TK_PUNCT(Punct_Shr),
+    // 2
+    TK_CHAR('+'),
+    TK_CHAR('-'),
+    // 3
+    TK_CHAR('*'),
+    TK_CHAR('/'),
+    TK_CHAR('%'),
+    // 4
+    TK_CHAR('^'),
 };
 
 const TokenKind TK_Keyword_AnyTypeModifier[2] = {TK_KEYWORD(Keyword_Mutable), TK_KEYWORD(Keyword_Constant)};
 
-static_assert(PUNCT_COUNT == 25, "token punct count changed");
+static_assert(PUNCT_COUNT == 26, "token punct count changed");
 const char *puncts[PUNCT_COUNT] = {
-    [Punct_PlusPlus] = "++",  [Punct_MinusMinus] = "--", [Punct_Shl] = "<<",    [Punct_Shr] = ">>",
-    [Punct_AndAnd] = "&&",    [Punct_OrOr] = "||",       [Punct_PlusEq] = "+=", [Punct_MinusEq] = "-=",
-    [Punct_MulEq] = "*=",     [Punct_DivEq] = "/=",      [Punct_ModEq] = "%=",  [Punct_ShlEq] = "<<=",
-    [Punct_ShrEq] = ">>=",    [Punct_EqualEq] = "==",    [Punct_NEq] = "!=",    [Punct_LEq] = "<=",
-    [Punct_GEq] = ">=",       [Punct_AndEq] = "&=",      [Punct_XorEq] = "^=",  [Punct_OrEq] = "|=",
-    [Punct_AndAndEq] = "&&=", [Punct_OrOrEq] = "||=",    [Punct_Arrow] = "->",  [Punct_WideArrow] = "=>",
-    [Punct_ColonColon] = "::"};
+    [Punct_PlusPlus] = "++",  [Punct_MinusMinus] = "--", [Punct_Shl] = "<<",     [Punct_Shr] = ">>",
+    [Punct_AndAnd] = "&&",    [Punct_OrOr] = "||",       [Punct_PlusEq] = "+=",  [Punct_MinusEq] = "-=",
+    [Punct_MulEq] = "*=",     [Punct_DivEq] = "/=",      [Punct_ModEq] = "%=",   [Punct_ShlEq] = "<<=",
+    [Punct_ShrEq] = ">>=",    [Punct_EqEqEq] = "===",    [Punct_EqEq] = "==",    [Punct_NEq] = "!=",
+    [Punct_LEq] = "<=",       [Punct_GEq] = ">=",        [Punct_AndEq] = "&=",   [Punct_XorEq] = "^=",
+    [Punct_OrEq] = "|=",      [Punct_AndAndEq] = "&&=",  [Punct_OrOrEq] = "||=", [Punct_Arrow] = "->",
+    [Punct_WideArrow] = "=>", [Punct_ColonColon] = "::"};
 
 static_assert(KEYWORD_COUNT == 8, "token keyword count changed");
 const char *keywords[KEYWORD_COUNT] = {

@@ -7,4 +7,7 @@ main: main.c tools.h lexer.h parser.h bokay.h
 run: main
 	./main $(FILE)
 
+gdb: main
+	gdb ./main
+
 .PHONY: run
