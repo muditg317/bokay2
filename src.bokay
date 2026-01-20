@@ -10,3 +10,8 @@ type bo = *baz
 type baz = **foo[33]
 
 type bruh = func (bit: foo, bat: func (ping: bool, pong: *bool) => f64) => void;
+
+{{};}
+
+foo: u8 = 5;
+

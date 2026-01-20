@@ -140,6 +140,7 @@ bool type_parser_compile_array_dims(Parser *p, ArrayDims *dims);
 bool type_parser_compile_func_type(Parser *p, TypeRef *type);
 
 TypeRef parser__find_type(TypeDefs *dictionary, StringView typename);
+#define parser_type(p, cstr) parser__find_type(&(p)->type_defs, sv_from_cstr_lit(cstr))
 TypeRef parser__find_or_register_typedef(TypeDefs *dictionary, TypeDef type);
 
 typedef struct TypeDefModOpts {
@@ -172,6 +173,7 @@ const char *type_kind_to_str(TypeKind tk) {
   }
 }
 
+static_assert(Type_COUNT == 7, "Update typedef_to_str");
 void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb) {
   switch (type->kind) {
   case Type_Void: {
@@ -327,7 +329,7 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
 bool type_parser_compile_array_dims(Parser *p, ArrayDims *dims) {
   Token t = {0};
   while (lexer_get_and_expect(p->l, &t, TK_Literal_Integer)) {
-    da_push(dims, t.lit_int);
+    da_push(dims, t.lit.int_);
     if (!lexer_get_and_expect_from_cstr(p->l, &t, ",]"))
       return parser__fwd_lex_errorf(p, "Array dimensions must be bracket-enclosed, comma-separated integer list.");
     if (token_is(t, TK_CHAR(']'))) return true;

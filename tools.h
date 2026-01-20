@@ -61,13 +61,49 @@
 
 #define TOOLS_COMBINE1(X, Y) X##Y
 #define TOOLS_COMBINE(X, Y) TOOLS_COMBINE1(X, Y)
-#define TOOLS_UNIQUE_VAR(prefix) TOOLS_COMBINE(prefix, TOOLS_COMBINE(_, __LINE__))
+#define TOOLS_UNIQUE_VAR(prefix) TOOLS_COMBINE(__, TOOLS_COMBINE(prefix, TOOLS_COMBINE(_, TOOLS_COMBINE(__LINE__, __))))
 
 #define DEPAREN(...) ESC(ISH __VA_ARGS__)
 #define ISH(...) ISH __VA_ARGS__
 #define ESC(...) ESC_(__VA_ARGS__)
 #define ESC_(...) VAN##__VA_ARGS__
 #define VANISH
+
+#define TOOLS_NARGS(...) TOOLS_NARGS_PP_ARG_N_IMPL(__VA_ARGS__, TOOLS_NARGS_PP_RSEQ_N())
+#define TOOLS_NARGS_PP_ARG_N_IMPL(...) TOOLS_NARGS_PP_ARG_N(__VA_ARGS__)
+#define TOOLS_NARGS_PP_ARG_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19,     \
+                             _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, \
+                             _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, \
+                             _56, _57, _58, _59, _60, _61, _62, _63, N, ...)                                           \
+  N
+#define TOOLS_NARGS_PP_RSEQ_N()                                                                                        \
+  63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35,  \
+      34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6,  \
+      5, 4, 3, 2, 1, 0
+
+/* NEW_CHECK(default, maybe_blank) */
+#define TOOLS_MAYBE_DEFAULT(...) TOOLS_MAYBE_DEFAULT_M_(__VA_ARGS__)
+/* delay expansion of M once to perform TOOLS_MAYBE_DEFAULT_Q */
+#define TOOLS_MAYBE_DEFAULT_M_(D, ...) TOOLS_MAYBE_DEFAULT_F(D, TOOLS_MAYBE_DEFAULT_Q(__VA_ARGS__))
+/* TOOLS_MAYBE_DEFAULT_Q(maybe_blank): if __VA_ARGS__ is non-blank, __VA_ARGS__. Otherwise, TOOLS_MAYBE_DEFAULT_SPACE */
+#define TOOLS_MAYBE_DEFAULT_Q(...) TOOLS_MAYBE_DEFAULT_FIRST_ONE(dummy, ##__VA_ARGS__, TOOLS_MAYBE_DEFAULT_SPACE)
+/* Given a dummy and >=1 arguments, expand to the first argument */
+#define TOOLS_MAYBE_DEFAULT_FIRST_ONE(dummy, a1, ...) a1
+/* TOOLS_MAYBE_DEFAULT_SPACE just expands into two arguments so that we can differentiate between was-blank (2 args) and
+ * non-blank (1 arg) */
+#define TOOLS_MAYBE_DEFAULT_SPACE 0, 0
+/* TOOLS_MAYBE_DEFAULT_F(default, one-or-two-arguments) */
+#define TOOLS_MAYBE_DEFAULT_F(...) TOOLS_MAYBE_DEFAULT_F_(__VA_ARGS__)
+#define TOOLS_MAYBE_DEFAULT_F_(...) TOOLS_MAYBE_DEFAULT_F__(__VA_ARGS__)
+/* delay expansion of TOOLS_MAYBE_DEFAULT_F twice, for performing TOOLS_MAYBE_DEFAULT_Q and TOOLS_MAYBE_DEFAULT_SPACE */
+#define TOOLS_MAYBE_DEFAULT_F__(D, ...) TOOLS_MAYBE_DEFAULT_H(NARGS(__VA_ARGS__), D, __VA_ARGS__)
+/* TOOLS_MAYBE_DEFAULT_H(1 or 2, default, maybe_blank) */
+#define TOOLS_MAYBE_DEFAULT_H(...) TOOLS_MAYBE_DEFAULT_H_(__VA_ARGS__)
+/* delay expansion once, for performing NARGS */
+#define TOOLS_MAYBE_DEFAULT_H_(N, D, ...) TOOLS_MAYBE_DEFAULT_DO##N(D, __VA_ARGS__)
+/* based on NARGS, pick correct result */
+#define TOOLS_MAYBE_DEFAULT_DO1(D, ...) __VA_ARGS__
+#define TOOLS_MAYBE_DEFAULT_DO2(D, ...) D
 
 // Expression value will be the shifted value
 #define shift(ptr, size) (TOOLS_ASSERT((size) > 0 && "shift on empty array"), (size)--, *(ptr)++)
@@ -78,6 +114,17 @@
     goto defer_label;                                                                                                  \
   } while (0)
 #define return_defer(value) return_defer_named(result, value, defer)
+
+// =====================================================
+// ====================== Memory =======================
+// =====================================================
+
+void *memdup_impl(void *src, size_t n);
+#define memdup(src) memdup_impl((src), sizeof(*(src)));
+
+// =====================================================
+// ==================== END Memory =====================
+// =====================================================
 
 // =====================================================
 // ======================= Span ========================
@@ -127,11 +174,7 @@
   } while (0)
 #define da_free(da) ((da)->data ? TOOLS_FREE((da)->data) : 0, (da)->capacity = 0, (da)->size = 0);
 
-#define da_push(da, item)                                                                                              \
-  do {                                                                                                                 \
-    da_reserve((da), (da)->size + 1);                                                                                  \
-    (da)->data[(da)->size++] = (item);                                                                                 \
-  } while (0)
+#define da_push(da, item) (({ da_reserve((da), (da)->size + 1); }), (da)->data[(da)->size++] = (item))
 #define da_push_n(da, items, n)                                                                                        \
   do {                                                                                                                 \
     da_reserve((da), (da)->size + (n));                                                                                \
@@ -181,6 +224,7 @@ typedef struct SV {
 TOOLS_DEF size_t sb_appendf(StringBuilder *sb, const char *fmt, ...);
 TOOLS_DEF size_t sb_align_with(StringBuilder *sb, size_t alignment, char fill);
 #define sb_align(sb, alignment) sb_align_with((sb), (alignment), ' ')
+#define sv_extend_to_endof(sv, other) ((sv)->size = &span_last(&(other)) - (sv)->data)
 
 #define sb_to_cstr(sb) strndup((sb).data, (sb).size)
 
@@ -242,8 +286,10 @@ TOOLS_DEF StringView sv_trim(StringView sv);
 // internal definitions
 #define serrorf(s, fmt, ...) ((void)sb_appendf(&(s)->error, fmt __VA_OPT__(, ) __VA_ARGS__), false)
 #define serror_forwardf(to, from, bridgetext, fmt, ...)                                                                \
-  serrorf((to), fmt bridgetext SB_Fmt, __VA_ARGS__ __VA_OPT__(, ) SB_Arg((from)->error))
-#define serror_causedf(s, fmt, ...) serrorf((s), "\n\tCaused: " fmt __VA_OPT__(, ) __VA_ARGS__)
+  serrorf((to), "[%s:%-4d] " fmt bridgetext SB_Fmt, __FILE__, __LINE__,                                                \
+          __VA_ARGS__ __VA_OPT__(, ) SB_Arg((from)->error))
+#define serror_causedf(s, fmt, ...)                                                                                    \
+  serrorf((s), "\n\tCaused [%s:%-4d]: " fmt, __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
 #define serror_exists(s) ((s)->error.size > 0)
 #define serror_clear(s) sb_clear(&(s)->error)
 
@@ -301,6 +347,8 @@ TOOLS_DEF void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char 
 #endif // TOOLS_H_
 
 #ifdef TOOLS_IMPL
+
+void *memdup_impl(void *src, size_t n) { return memcpy(calloc(1, n), src, n); }
 
 size_t sb_appendf(StringBuilder *sb, const char *fmt, ...) {
   va_list args;
@@ -470,6 +518,8 @@ void tools_log_opt(ToolsLogLevel level, ToolsLogOpts opts, const char *fmt, ...)
 #define ARRAY_GET TOOLS_ARRAY_GET
 #define COMBINE TOOLS_COMBINE
 #define UNIQUE_VAR TOOLS_UNIQUE_VAR
+#define NARGS TOOLS_NARGS
+#define MAYBE_DEFAULT TOOLS_MAYBE_DEFAULT
 #define LogLevel ToolsLogLevel
 #define TRACE TOOLS_TRACE
 #define DEBUG TOOLS_DEBUG

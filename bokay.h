@@ -162,7 +162,7 @@ bool bokay_interpret(BokayEngine *b) {
   serror_clear(&b->p);
   parser_diag_remaining_exprs(&b->p);
   parser_log_errors(&b->p);
-  diag_types(&b->p.type_defs);
+  // diag_types(&b->p.type_defs);
   return result;
 }
 
