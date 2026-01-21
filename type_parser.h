@@ -55,6 +55,16 @@ typedef struct ArrayDims {
   DA_FIELDS(size_t);
 } ArrayDims;
 
+typedef union TypeDefAs {
+  ValueKind value;
+  TypeRef ptr_to;
+  struct Array {
+    TypeRef of;
+    ArrayDims dims;
+  } array;
+  TypeRefs compound_fields;
+  FuncSignature func_signature;
+} TypeDefAs;
 struct TypeDef {
   TypeKind kind;
   size_t size;
@@ -65,16 +75,7 @@ struct TypeDef {
 
   bool mutable;
 
-  union TypeDefAs {
-    ValueKind value;
-    TypeRef ptr_to;
-    struct Array {
-      TypeRef of;
-      ArrayDims dims;
-    } array;
-    TypeRefs compound_fields;
-    FuncSignature func_signature;
-  } as;
+  TypeDefAs as;
 };
 
 const size_t POINTER_SIZE = __SIZEOF_POINTER__ * 8;
@@ -114,6 +115,7 @@ const char *type_kind_to_str(TypeKind tk);
 void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb);
 #define typedef_to_str_from_ref(dict, ref, sb) typedef_to_str((dict), span_ptr((dict), (ref)), (sb))
 bool typedef_eq(TypeDefs *dictionary, TypeDef *a, TypeDef *b);
+bool typedef_as_eq(TypeDefs *dictionary, TypeKind kind, TypeDefAs *a, TypeDefAs *b);
 
 #define type_diagx(dict, t, ...)                                                                                       \
   do {                                                                                                                 \
@@ -248,21 +250,24 @@ bool typedef_eq(TypeDefs *dictionary, TypeDef *a, TypeDef *b) {
   if (a->size != b->size) return false;
   if (a->mutable != b->mutable) return false;
 
-  switch (b->kind) {
-  case Type_Value: return a->as.value == b->as.value;
-  case Type_Ptr: return a->as.ptr_to == b->as.ptr_to;
+  return typedef_as_eq(dictionary, a->kind, &a->as, &b->as);
+}
+bool typedef_as_eq(TypeDefs *dictionary, TypeKind kind, TypeDefAs *a, TypeDefAs *b) {
+  switch (kind) {
+  case Type_Value: return a->value == b->value;
+  case Type_Ptr: return a->ptr_to == b->ptr_to;
   case Type_Array:
-    return typedef_eq(dictionary, span_ptr(dictionary, a->as.array.of), span_ptr(dictionary, b->as.array.of)) &&
-           da_eq(a->as.array.dims, b->as.array.dims);
+    return typedef_eq(dictionary, span_ptr(dictionary, a->array.of), span_ptr(dictionary, b->array.of)) &&
+           da_eq(a->array.dims, b->array.dims);
   case Type_Struct: // fallthrough
-  case Type_Union: return da_eq(a->as.compound_fields, b->as.compound_fields);
+  case Type_Union: return da_eq(a->compound_fields, b->compound_fields);
   case Type_Func:
-    if (a->as.func_signature.ret != b->as.func_signature.ret ||
-        a->as.func_signature.params.size != b->as.func_signature.params.size)
+    if (a->func_signature.ret != b->func_signature.ret ||
+        a->func_signature.params.size != b->func_signature.params.size)
       return false;
-    for (size_t i = 0; i < a->as.func_signature.params.size; i++) {
-      if (!typedef_eq(dictionary, span_ptr(dictionary, a->as.func_signature.params.data[i].type),
-                      span_ptr(dictionary, b->as.func_signature.params.data[i].type)))
+    for (size_t i = 0; i < a->func_signature.params.size; i++) {
+      if (!typedef_eq(dictionary, span_ptr(dictionary, a->func_signature.params.data[i].type),
+                      span_ptr(dictionary, b->func_signature.params.data[i].type)))
         return false;
     }
     return true;
@@ -425,12 +430,12 @@ TypeRef typedefs_find_by_name(TypeDefs *dictionary, StringView typename) {
 
 TypeRef typedefs_find_or_register_new(TypeDefs *dictionary, TypeDef new_type) {
   type_diagx(dictionary, &new_type, DEBUG, (.debug_label = "typedef"), "Check if " SB_Fmt " exists.");
-  if (dictionary->size == 23) {
-    StringBuilder sb = {0};
-    typedef_to_str(dictionary, &new_type, &sb);
-    log(INFO, "add 23rd type: " SB_Fmt, SB_Arg(sb));
-    // asm("int3");
-  }
+  // if (dictionary->size == 23) {
+  //   StringBuilder sb = {0};
+  //   typedef_to_str(dictionary, &new_type, &sb);
+  //   log(INFO, "add 23rd type: " SB_Fmt, SB_Arg(sb));
+  //   // asm("int3");
+  // }
   TypeRef ref = {0};
   da_for_each(TypeDef, existing, *dictionary) {
     ref = existing - dictionary->data;

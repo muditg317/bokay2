@@ -151,7 +151,20 @@ bool program_typecheck_expr_opt(Program *prog, Expr *expr, TypeCheckOpt opt) {
 
   } break;
   case EK_UnaryOp: {
-
+    if (!program_typecheck_expr(prog, expr->as.unaryop.arg))
+      return_defer(serror_causedf(prog, "Failed typecheck on unary op arg."));
+    TypeRef out = {0};
+    if (!program_typecheck_verify_unaryop(prog, expr->as.unaryop.op, expr->as.unaryop.arg->type.base, &out)) {
+      static StringBuilder sb = {0};
+      sb_clear(&sb);
+      sb_appendf(&sb, "Cannot apply unaryop[%s] to type: {", token_kind_to_str(expr->as.unaryop.op.kind));
+      typedef_to_str_from_ref(&prog->types, expr->as.unaryop.arg->type.base, &sb);
+      sb_append_cstr(&sb, "}.");
+      return_defer(serror_locf(prog, expr->as.unaryop.op.loc, SB_Fmt, SB_Arg(sb)));
+    }
+    expr->type.base = out;
+    // TODO: assignable
+    return_defer(true);
   } break;
   case EK_Variable: {
     Variable *existing = scope_stack_find(&prog->scope_stack, expr->as.variable.name);
@@ -183,7 +196,7 @@ bool program_typecheck_expr_opt(Program *prog, Expr *expr, TypeCheckOpt opt) {
       type.base = typedefs_find_by_name(&prog->types, sv_from_cstr(size_to_type[size]));
     } break;
     case Literal_Float: {
-      type.base = typedefs_find_by_name(&prog->types, sv_from_cstr("f64"));
+      type.base = typedefs_find_by_name(&prog->types, sv_from_cstr("f32"));
     } break;
     case Literal_Char: {
       type.base = typedefs_find_by_name(&prog->types, sv_from_cstr("u8"));
@@ -235,9 +248,21 @@ bool program_typecheck_expr_opt(Program *prog, Expr *expr, TypeCheckOpt opt) {
   // statements
   case EK_Definition: {
     // asm("int3");
-    if (!program_typecheck_expr(prog, expr->as.definition.rhs, .expected = expr->as.definition.var.type,
-                                .has_expected = true))
-      return serror_causedf(prog, "Failed typecheck for rhs of defintion (must match variable type).");
+    if (expr->as.definition.rhs) {
+      if (!program_typecheck_expr(prog, expr->as.definition.rhs))
+        return serror_causedf(prog, "Failed typecheck for rhs of defintion.");
+      if (!program_typecheck_verify_assignable(prog, expr->as.definition.var.type,
+                                               expr->as.definition.rhs->type.base)) {
+        static StringBuilder sb = {0};
+        sb_clear(&sb);
+        sb_appendf(&sb, "Cannot initialize lhs with rhs. {lhs=");
+        typedef_to_str_from_ref(&prog->types, expr->as.definition.var.type, &sb);
+        sb_appendf(&sb, "} = {rhs=");
+        typedef_to_str_from_ref(&prog->types, expr->as.definition.rhs->type.base, &sb);
+        sb_append_cstr(&sb, "}.");
+        return_defer(serror_locf(prog, expr->as.definition.rhs->loc, SB_Fmt, SB_Arg(sb)));
+      }
+    }
     Scope *curr_scope = &da_last(&prog->scope_stack);
     Variable *existing = scope_find(curr_scope, expr->as.definition.var.name);
     if (existing)
@@ -297,16 +322,21 @@ bool program_typecheck_verify_assignable(Program *prog, TypeRef receiver, TypeRe
   TypeDef receiver_type = span_at(&prog->types, receiver);
   TypeDef value_type = span_at(&prog->types, value);
   if (receiver != value) {
-    value_type.mutable = receiver_type.mutable;
-    if (typedef_eq(&prog->types, &receiver_type, &value_type)) return true;
-    StringBuilder sb = {0};
-    typedef_to_str(&prog->types, &receiver_type, &sb);
-    log(INFO, "check receiver %zu: " SB_Fmt, receiver, SB_Arg(sb));
-    sb_clear(&sb);
-    typedef_to_str(&prog->types, &value_type, &sb);
-    log(INFO, "check value %zu: " SB_Fmt, value, SB_Arg(sb));
-    sb_free(&sb);
-    return false;
+    // asm("int3");
+    if (receiver_type.kind != value_type.kind) return false;
+    if (receiver_type.size < value_type.size) return false;
+    if (!typedef_as_eq(&prog->types, receiver_type.kind, &receiver_type.as, &value_type.as)) return false;
+    // return receiver_type.mutable;
+    return true;
+
+    // StringBuilder sb = {0};
+    // typedef_to_str(&prog->types, &receiver_type, &sb);
+    // log(INFO, "check receiver %zu: " SB_Fmt, receiver, SB_Arg(sb));
+    // sb_clear(&sb);
+    // typedef_to_str(&prog->types, &value_type, &sb);
+    // log(INFO, "check value %zu: " SB_Fmt, value, SB_Arg(sb));
+    // sb_free(&sb);
+    // return false;
   }
   return true;
 }
@@ -383,12 +413,50 @@ bool program_typecheck_verify_binop(Program *prog, TypeRef a, Token op, TypeRef 
   default: UNREACHABLE("type->kind second stage in binop verify");
   }
 }
-bool program_typecheck_verify_unaryop(Program *prog, Token op, TypeRef a, TypeRef *result) {
+bool program_typecheck_verify_unaryop(Program *prog, Token op, TypeRef arg, TypeRef *result) {
   UNUSED(prog);
-  UNUSED(op);
-  UNUSED(a);
-  UNUSED(result);
-  TODO("verify unary op");
+
+  bool is_numeric = false;
+  bool is_memory = false;
+  bool is_negation = false;
+  if (token_is(op, TK_CHAR('-'))) {
+    *result = arg;
+    is_numeric = true;
+  } else if (token_is(op, TK_CHAR('*'))) {
+    *result = arg;
+    is_memory = true;
+  } else if (token_is(op, TK_CHAR('&'))) {
+    *result = arg;
+    is_memory = true;
+  } else if (token_is(op, TK_CHAR('!'))) {
+    *result = arg;
+    is_negation = true;
+  }
+  TypeDef *type = span_ptr(&prog->types, arg);
+  if (is_numeric) {
+    // asm("int3");
+    if (type->kind != Type_Value) return false;
+    if (type->as.value != Type_IntegerUnsigned && type->as.value != Type_IntegerSigned && type->as.value != Type_Float)
+      return false;
+    if (type->as.value == Type_IntegerUnsigned) {
+      TypeDef new = *type;
+      new.as.value = Type_IntegerSigned;
+      new.name = NULL;
+      *result = typedefs_find_or_register_new(&prog->types, new);
+    }
+    return true;
+  }
+  if (is_memory) {
+    if (token_is(op, TK_CHAR('*'))) {
+      if (type->kind != Type_Ptr) return false;
+      *result = type->as.ptr_to;
+      return true;
+    } else if (token_is(op, TK_CHAR('&'))) {
+      *result = typedefs_register_modded_type(&prog->types, arg, .make_ptr = true);
+    }
+  }
+  if (is_negation) { return type->kind == Type_Value && type->as.value == Type_Bool; }
+  return false;
 }
 
 #endif
