@@ -24,6 +24,7 @@ typedef enum ValueKind {
   Type_IntegerUnsigned,
   Type_IntegerSigned,
   Type_Float,
+  Type_String,
 } ValueKind;
 
 typedef struct TypeDef TypeDef;
@@ -89,7 +90,7 @@ const size_t POINTER_SIZE = __SIZEOF_POINTER__ * 8;
 // const TypeDef Type_s64 = {.kind = Type_IntegerSigned, .size = 64, .name = "s64"};
 // const TypeDef Type_f32 = {.kind = Type_Float, .size = 32, .name = "f32"};
 // const TypeDef Type_f64 = {.kind = Type_Float, .size = 64, .name = "f64"};
-const TypeDef DEFAULT_TYPES[12] = {
+const TypeDef DEFAULT_TYPES[13] = {
     //    Type_void, Type_u8, Type_u16, Type_u32, Type_u64, Type_s8, Type_s16, Type_s32, Type_s64, Type_f32, Type_f64
     // //};
     (TypeDef){.kind = Type_Void, .size = 0, .name = "void"},
@@ -104,11 +105,14 @@ const TypeDef DEFAULT_TYPES[12] = {
     (TypeDef){.kind = Type_Value, .as.value = Type_IntegerSigned, .size = 64, .name = "s64"},
     (TypeDef){.kind = Type_Value, .as.value = Type_Float, .size = 32, .name = "f32"},
     (TypeDef){.kind = Type_Value, .as.value = Type_Float, .size = 64, .name = "f64"},
+    (TypeDef){
+        .kind = Type_Value, .as.value = Type_String, .size = 128, .name = "string"}, // string stored as fat pointer
 };
 
 const char *type_kind_to_str(TypeKind tk);
 
 void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb);
+#define typedef_to_str_from_ref(dict, ref, sb) typedef_to_str((dict), span_ptr((dict), (ref)), (sb))
 bool typedef_eq(TypeDefs *dictionary, TypeDef *a, TypeDef *b);
 
 #define type_diagx(dict, t, ...)                                                                                       \
@@ -139,19 +143,20 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
 bool type_parser_compile_array_dims(Parser *p, ArrayDims *dims);
 bool type_parser_compile_func_type(Parser *p, TypeRef *type);
 
-TypeRef parser__find_type(TypeDefs *dictionary, StringView typename);
-#define parser_type(p, cstr) parser__find_type(&(p)->type_defs, sv_from_cstr_lit(cstr))
-TypeRef parser__find_or_register_typedef(TypeDefs *dictionary, TypeDef type);
+TypeRef typedefs_find_by_name(TypeDefs *dictionary, StringView typename);
+#define parser_type(p, cstr) typedefs_find_by_name(&(p)->type_defs, sv_from_cstr_lit(cstr))
+TypeRef typedefs_find_or_register_new(TypeDefs *dictionary, TypeDef type);
 
 typedef struct TypeDefModOpts {
+  bool mutable_by_default;
   bool make_mutable;
   bool make_constant;
   bool make_ptr;
   ArrayDims *make_array;
 } TypeDefModOpts;
-TypeRef parser__register_modded_type_opt(Parser *p, TypeRef base_ref, TypeDefModOpts opts);
-#define parser__register_modded_type(p, base, ...)                                                                     \
-  parser__register_modded_type_opt((p), (base), (TypeDefModOpts){__VA_ARGS__});
+TypeRef typedefs_register_modded_type_opt(TypeDefs *dictionary, TypeRef base_ref, TypeDefModOpts opts);
+#define typedefs_register_modded_type(dict, base, ...)                                                                 \
+  typedefs_register_modded_type_opt((dict), (base), (TypeDefModOpts){__VA_ARGS__});
 
 // =================== Implementation ===================
 
@@ -163,6 +168,7 @@ const char *type_kind_to_str(TypeKind tk) {
   // case Type_IntegerUnsigned: return "Type_IntegerUnsigned";
   // case Type_IntegerSigned: return "Type_IntegerSigned";
   // case Type_Float: return "Type_Float";
+  // case Type_String: return "Type_String";
   case Type_Value: return "Type_Value";
   case Type_Ptr: return "Type_Ptr";
   case Type_Array: return "Type_Array";
@@ -175,6 +181,7 @@ const char *type_kind_to_str(TypeKind tk) {
 
 static_assert(Type_COUNT == 7, "Update typedef_to_str");
 void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb) {
+  if (type->kind != Type_Void) sb_append_cstr(sb, type->mutable ? "mutable " : "const ");
   switch (type->kind) {
   case Type_Void: {
     sb_append_cstr(sb, "void");
@@ -193,16 +200,19 @@ void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb) {
     case Type_Float: {
       sb_appendf(sb, "f%zu", type->size);
     } break;
+    case Type_String: {
+      sb_appendf(sb, "string", type->size);
+    } break;
     }
   } break;
   case Type_Ptr: {
     sb_append_cstr(sb, "*(");
-    typedef_to_str(dictionary, span_ptr(dictionary, type->as.ptr_to), sb);
+    typedef_to_str_from_ref(dictionary, type->as.ptr_to, sb);
     sb_append(sb, ')');
   } break;
   case Type_Array: {
     sb_append(sb, '(');
-    typedef_to_str(dictionary, span_ptr(dictionary, type->as.array.of), sb);
+    typedef_to_str_from_ref(dictionary, type->as.array.of, sb);
     sb_append_cstr(sb, ")[");
     da_for_each(size_t, dim, type->as.array.dims) {
       if (dim != &span_at(&type->as.array.dims, 0)) sb_append_cstr(sb, ", ");
@@ -221,10 +231,10 @@ void typedef_to_str(TypeDefs *dictionary, TypeDef *type, StringBuilder *sb) {
     da_for_each(Variable, param, type->as.func_signature.params) {
       if (param != span_ptr(&type->as.func_signature.params, 0)) sb_append_cstr(sb, ", ");
       sb_appendf(sb, SV_Fmt ": ", SV_Arg(param->name));
-      typedef_to_str(dictionary, span_ptr(dictionary, param->type), sb);
+      typedef_to_str_from_ref(dictionary, param->type, sb);
     }
     sb_append_cstr(sb, ") => ");
-    typedef_to_str(dictionary, span_ptr(dictionary, type->as.func_signature.ret), sb);
+    typedef_to_str_from_ref(dictionary, type->as.func_signature.ret, sb);
     sb_append(sb, ')');
   } break;
   default: UNREACHABLE("TypeKind for typedef to str");
@@ -247,8 +257,15 @@ bool typedef_eq(TypeDefs *dictionary, TypeDef *a, TypeDef *b) {
   case Type_Struct: // fallthrough
   case Type_Union: return da_eq(a->as.compound_fields, b->as.compound_fields);
   case Type_Func:
-    return a->as.func_signature.ret == b->as.func_signature.ret &&
-           da_eq(a->as.func_signature.params, b->as.func_signature.params);
+    if (a->as.func_signature.ret != b->as.func_signature.ret ||
+        a->as.func_signature.params.size != b->as.func_signature.params.size)
+      return false;
+    for (size_t i = 0; i < a->as.func_signature.params.size; i++) {
+      if (!typedef_eq(dictionary, span_ptr(dictionary, a->as.func_signature.params.data[i].type),
+                      span_ptr(dictionary, b->as.func_signature.params.data[i].type)))
+        return false;
+    }
+    return true;
   default: return true;
   }
 }
@@ -260,15 +277,17 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
   Token t = {0};
   if (!lexer_expect_token(p->l, &t)) { return parser__fwd_lex_errorf(p, "Expected type expression."); }
   if (token_is_oneof_array(t, TK_Keyword_AnyTypeModifier)) {
+    // asm("int3");
+    // log(INFO, "got a modifier! " LOC_Fmt, LOC_Arg(t.loc));
     if (opts.no_mods) {
       return serror_locf(p, t.loc, "`" SV_Fmt "` not allowed here (cannot follow another type modifier).",
                          SV_Arg(t.text));
     }
-    if (!type_parser_compile_type(p, type, .no_mods = true)) {
+    if (!type_parser_compile_type(p, type, .no_mods = true, .allow_funcs = opts.allow_funcs)) {
       return serror_causedf(p, "Failed to compile type expression with `" SV_Fmt "` modifier.", SV_Arg(t.text));
     }
-    *type = parser__register_modded_type(p, *type, .make_mutable = t.kind.as.kw == Keyword_Mutable,
-                                         .make_constant = t.kind.as.kw == Keyword_Constant);
+    *type = typedefs_register_modded_type(&p->type_defs, *type, .make_mutable = t.kind.as.kw == Keyword_Mutable,
+                                          .make_constant = t.kind.as.kw == Keyword_Constant);
     return true;
   }
   if (token_is(t, TK_Keyword_Func)) {
@@ -282,7 +301,7 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
     if (!type_parser_compile_type(p, type)) {
       return serror_causedf(p, "Failed to compile pointee type at " LOC_Fmt ".", LOC_Arg(t.loc));
     }
-    *type = parser__register_modded_type(p, *type, .make_ptr = true);
+    *type = typedefs_register_modded_type(&p->type_defs, *type, .make_ptr = true);
     return true;
   }
   if (token_is(t, TK_CHAR('('))) {
@@ -296,7 +315,7 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
     return true;
   }
   if (token_is(t, TK_Ident)) {
-    *type = parser__find_type(&p->type_defs, t.text);
+    *type = typedefs_find_by_name(&p->type_defs, t.text);
     // asm("int3");
     type_diagx(&p->type_defs, span_ptr(&p->type_defs, *type), DEBUG, (.debug_label = "typedef"),
                "found type for name " SV_Fmt ": " SB_Fmt, SV_Arg(t.text));
@@ -312,7 +331,7 @@ bool type_parser_compile_type_opt(Parser *p, TypeRef *type, CompileTypeOpts opts
         logx(DEBUG, (.omit_newline = true), "got array dims: %zu: [", dims.size);
         da_for_each(size_t, dim, dims) { logx(DEBUG, (.omit_prefix = true, .omit_newline = true), "%zu ", *dim); }
         logx(DEBUG, (.omit_prefix = true), "]");
-        *type = parser__register_modded_type(p, *type, .make_array = &dims);
+        *type = typedefs_register_modded_type(&p->type_defs, *type, .make_array = &dims);
         s = lexer_save(p->l);
       } while (lexer_get_and_expect(p->l, &t, TK_CHAR('[')));
       lexer_restore(p->l, s);
@@ -382,11 +401,11 @@ parse_ret:
     return serror_causedf(p, "Failed to parse function return type. Signature started at " LOC_Fmt ".", LOC_Arg(start));
   }
 
-  *type = parser__find_or_register_typedef(&p->type_defs, func_type);
+  *type = typedefs_find_or_register_new(&p->type_defs, func_type);
   return true;
 }
 
-TypeRef parser__find_type(TypeDefs *dictionary, StringView typename) {
+TypeRef typedefs_find_by_name(TypeDefs *dictionary, StringView typename) {
   TypeRef ref = {0};
   da_for_each(TypeDef, type, *dictionary) {
     ref = type - dictionary->data;
@@ -404,8 +423,14 @@ TypeRef parser__find_type(TypeDefs *dictionary, StringView typename) {
   return BAD_TYPE_REF;
 }
 
-TypeRef parser__find_or_register_typedef(TypeDefs *dictionary, TypeDef new_type) {
+TypeRef typedefs_find_or_register_new(TypeDefs *dictionary, TypeDef new_type) {
   type_diagx(dictionary, &new_type, DEBUG, (.debug_label = "typedef"), "Check if " SB_Fmt " exists.");
+  if (dictionary->size == 23) {
+    StringBuilder sb = {0};
+    typedef_to_str(dictionary, &new_type, &sb);
+    log(INFO, "add 23rd type: " SB_Fmt, SB_Arg(sb));
+    // asm("int3");
+  }
   TypeRef ref = {0};
   da_for_each(TypeDef, existing, *dictionary) {
     ref = existing - dictionary->data;
@@ -415,22 +440,24 @@ TypeRef parser__find_or_register_typedef(TypeDefs *dictionary, TypeDef new_type)
   return dictionary->size - 1;
 }
 
-TypeRef parser__register_modded_type_opt(Parser *p, TypeRef base_ref, TypeDefModOpts opts) {
+TypeRef typedefs_register_modded_type_opt(TypeDefs *dictionary, TypeRef base_ref, TypeDefModOpts opts) {
   TypeDef type = {0};
-  TypeDef *base = span_ptr(&p->type_defs, base_ref);
+  TypeDef *base = span_ptr(dictionary, base_ref);
   type.kind = base->kind;
   type.size = base->size;
   type.mutable = base->mutable;
 
   if (opts.make_mutable) {
     type.mutable = true;
+    type.as = base->as;
   } else if (opts.make_constant) {
     type.mutable = false;
+    type.as = base->as;
   }
   if (opts.make_ptr) {
     type.kind = Type_Ptr;
     type.size = POINTER_SIZE;
-    type.mutable = p->opts.mutable_by_default;
+    type.mutable = opts.mutable_by_default;
     type.as.ptr_to = base_ref;
   }
   if (opts.make_array) {
@@ -438,11 +465,11 @@ TypeRef parser__register_modded_type_opt(Parser *p, TypeRef base_ref, TypeDefMod
     type.as.array.of = base_ref;
     type.size = base->size;
     da_for_each(size_t, dim, *opts.make_array) { type.size *= *dim; }
-    type.mutable = p->opts.mutable_by_default;
+    type.mutable = opts.mutable_by_default;
     da_clear(&type.as.array.dims);
     da_concat(&type.as.array.dims, opts.make_array);
   }
-  return parser__find_or_register_typedef(&p->type_defs, type);
+  return typedefs_find_or_register_new(dictionary, type);
 }
 
 void diag_types(TypeDefs *dictionary) {

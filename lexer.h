@@ -88,7 +88,7 @@ typedef struct TokenKind {
 #define TK_LITERAL(tk) ((TokenKind){.kind = Token_Literal, .as = {.literal = (tk)}})
 #define TK_PUNCT(tk) ((TokenKind){.kind = Token_Punct, .as = {.punct = (tk)}})
 #define TK_KEYWORD(tk) ((TokenKind){.kind = Token_Keyword, .as = {.kw = (tk)}})
-#define toks_as_array(n, ...) AS_ARRAY(TokenKind, n __VA_OPT__(, ) __VA_ARGS__)
+#define toks_as_array(n, ...) AS_ARRAY(TokenKind __VA_OPT__(, ) __VA_ARGS__)
 
 const TokenKind TK_Error = ((TokenKind){.kind = Token_Error});
 const TokenKind TK_EOF = ((TokenKind){.kind = Token_EOF});
@@ -597,7 +597,7 @@ finish_token:
 bool lexer_expect_token(Lexer *l, Token *t) {
   if (!lexer_get_token(l, t)) return false;
   if (token_is(*t, TK_EOF)) {
-    asm("int3");
+    // asm("int3");
     serror_locf(l, t->loc, "Unexpected EOF. Expected token");
     return false;
   }

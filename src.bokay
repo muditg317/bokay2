@@ -15,7 +15,7 @@ type bruh = func (bit: foo, bat: func (ping: bool, pong: *bool) => f64) => void;
 
 foo: u8 = 5;
 
-bar: func(a:u8) => bool {
+bar: mut func(a:u8) => bool {
   b: u8 = a + 3;
   return b % 5 == a%4;
 }

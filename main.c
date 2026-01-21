@@ -1,4 +1,4 @@
-#include "bokay.h"
+#include "program.h"
 #include "tools.h"
 
 int main(int argc, char **argv) {
@@ -9,13 +9,10 @@ int main(int argc, char **argv) {
   }
   const char *filepath = shift(argv, argc);
 
-  BokayEngine b;
-  if (!bokay_new(&b, .filepath = filepath)) return 1;
+  Program prog = {0};
+  if (!program_new(&prog, .filepath = filepath)) return 1;
 
-  if (!bokay_interpret(&b)) {
-    parser_log_errors(&b.p);
-    return 1;
-  }
+  if (!program_typecheck(&prog)) { return 1; }
 
   return 0;
 }
@@ -32,6 +29,6 @@ int main(int argc, char **argv) {
 #include "parser.h"
 #undef PARSER_IMPL
 
-#define BOKAY_IMPL
-#include "bokay.h"
-#undef BOKAY_IMPL
+#define PROGRAM_IMPL
+#include "program.h"
+#undef PROGRAM_IMPL

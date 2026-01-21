@@ -45,18 +45,14 @@
 
 // Helpers
 #define TOOLS_UNUSED(value) (void)(value)
-#define TOOLS_TODO(message)                                                                                            \
-  do {                                                                                                                 \
-    fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message);                                                 \
-    abort();                                                                                                           \
-  } while (0)
+#define TOOLS_TODO(message) (fprintf(stderr, "%s:%d: TODO: %s\n", __FILE__, __LINE__, message), abort())
 #define TOOLS_UNREACHABLE(message, ...)                                                                                \
   do {                                                                                                                 \
     fprintf(stderr, "%s:%d: UNREACHABLE: " message "\n", __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__);               \
     abort();                                                                                                           \
   } while (0)
 
-#define TOOLS_AS_ARRAY(Type, n, ...) ((Type[(n)]){__VA_ARGS__})
+#define TOOLS_AS_ARRAY(Type, ...) ((Type[TOOLS_NARGS(__VA_ARGS__)]){__VA_ARGS__})
 #define TOOLS_ARRAY_LEN(array) (sizeof(array) / sizeof((array)[0]))
 #define TOOLS_ARRAY_GET(array, index) (TOOLS_ASSERT((size_t)(index) < TOOLS_ARRAY_LEN(array)), array[(size_t)(index)])
 
@@ -150,6 +146,7 @@ void *memdup_impl(void *src, size_t n);
 #define span_eq(a, b) ((a).size == (b).size && memcmp((a).data, (b).data, (a).size * sizeof(*(a).data)) == 0)
 
 #define span_for_each(Type, it, span) for (Type *it = (span).data; it < ((span).data + (span).size); ++it)
+#define span_for_each_reversed(Type, it, span) for (Type *it = (span).data + (span).size; it >= (span).data; --it)
 
 // =====================================================
 // ===================== END Span ======================
@@ -294,6 +291,7 @@ TOOLS_DEF StringView sv_trim(StringView sv);
           __VA_ARGS__ __VA_OPT__(, ) SB_Arg((from)->error))
 #define serror_causedf(s, fmt, ...)                                                                                    \
   serrorf((s), "\n\tCaused [%s:%-4d]: " fmt, __FILE__, __LINE__ __VA_OPT__(, ) __VA_ARGS__)
+#define serror_size(s) (s)->error.size
 #define serror_exists(s) ((s)->error.size > 0)
 #define serror_clear(s) sb_clear(&(s)->error)
 

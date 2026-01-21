@@ -4,11 +4,10 @@
 #include "tools.h"
 
 typedef struct {
-  SERROR_FIELDS;
+  int a;
 } test;
 
 int main() {
-  test t = {0};
-  bool thing = serror_causedf(&t, "foo");
-  printf("%d\n", thing);
+  test t = {.a = 5, .a = 4};
+  printf("%d\n", t.a);
 }

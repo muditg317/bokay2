@@ -20,15 +20,12 @@ typedef enum {
   EK_FuncCall,
   EK_Index,
   EK_UnaryOp,
-  // EK_Deref, (unary)
-  // EK_Addr, (unary)
   EK_Variable,
   EK_Literal,
   EK_FunctionLiteral,
   // statements
   EK_Definition,
   EK_Return,
-  // EK_TypeDef,
 
   EK_COUNT
 } ExprKind;
@@ -41,7 +38,6 @@ typedef struct Exprs {
 } Exprs;
 
 typedef struct ExprBlock {
-  Variables expectedInScope;
   Exprs exprs;
 } ExprBlock;
 typedef struct ExprIf {
@@ -56,7 +52,7 @@ typedef struct ExprWhile {
 
 typedef struct ExprAssignment {
   Expr *lhs;
-  TokenKind op;
+  Token op;
   Expr *rhs;
 } ExprAssignment;
 
@@ -67,7 +63,7 @@ typedef struct ExprTernary {
 } ExprTernary;
 typedef struct ExprBinOp {
   Expr *lhs;
-  TokenKind op;
+  Token op;
   Expr *rhs;
 } ExprBinOp;
 
@@ -81,7 +77,7 @@ typedef struct ExprIndex {
 } ExprIndex;
 
 typedef struct ExprUnaryOp {
-  TokenKind op;
+  Token op;
   Expr *arg;
 } ExprUnaryOp;
 
@@ -147,17 +143,8 @@ void expr_reset_as(Expr *e);
 Expr *expr_copy(Expr *e);
 
 bool expr_is_typed(Expr *e);
+void expr_copy_type_if_typed(Expr *e, Type *type); // Ignore type if the block is untyped (part of statement)
 void expr_remove_type(Expr *e);
-
-typedef struct Program {
-  TypeDefs types;
-  // struct {
-  //   DA_FIELDS(Function)
-  // } funcs;
-  struct {
-    DA_FIELDS(Expr);
-  } exprs;
-} Program;
 
 typedef struct ParserOpts {
   TypeDef *type_defs;
@@ -180,8 +167,6 @@ typedef struct ParserState {
 
 Parser parser_new_opt(Lexer *l, ParserOpts opts);
 #define parser_new(l, ...) parser_new_opt(l, ((ParserOpts){__VA_ARGS__}))
-
-bool parser_get_program(Parser *p, Program *prog);
 
 bool parser_compile_top_level_expr(Parser *p, Expr *e);
 bool parser_get_expression(Parser *p, Expr *e);
@@ -265,6 +250,8 @@ bool parser_compile_function_literal(Parser *p, Expr *expr, bool skip_signature)
     }                                                                                                                  \
   } while (0)
 
+// =================== Implementation ===================
+
 #define TYPE_PARSER_IMPL
 #include "type_parser.h"
 
@@ -304,6 +291,9 @@ bool expr_is_typed(Expr *e) {
   // log(INFO, "untyped ref = (%zu, %s)", UNTYPED.base, UNTYPED.not_assignable ? "rval" : "lval");
   // return result;
 }
+void expr_copy_type_if_typed(Expr *e, Type *type) {
+  if (expr_is_typed(e)) memcpy(&e->type, type, sizeof(e->type));
+}
 void expr_remove_type(Expr *e) { memcpy(&e->type, &UNTYPED, sizeof(e->type)); }
 
 Parser parser_new_opt(Lexer *l, ParserOpts opts) {
@@ -312,21 +302,6 @@ Parser parser_new_opt(Lexer *l, ParserOpts opts) {
   da_push_n(&p.type_defs, DEFAULT_TYPES, ARRAY_LEN(DEFAULT_TYPES));
   if (opts.type_defs) da_push_n(&p.type_defs, opts.type_defs, opts.type_defs_count);
   return p;
-}
-
-bool parser_get_program(Parser *p, Program *prog) {
-  Expr e = {0};
-  while ((expr_reset(&e), parser_compile_top_level_expr(p, &e))) {
-    if (e.kind != EK_Error) da_push(&prog->exprs, e);
-    expr_reset(&e);
-  }
-  prog->types = p->type_defs;
-
-  if (serror_exists(p)) {
-    parser_log_errors(p);
-    serror_clear(p);
-  }
-  return e.kind == EK_Error || serror_exists(p);
 }
 
 bool parser_compile_top_level_expr(Parser *p, Expr *e) {
@@ -413,6 +388,7 @@ bool parser_compile_expr_or_statement(Parser *p, Expr *expr) {
                     return_defer(serror_causedf(
                         p, "Couldn't compile function definition block expected at " LOC_Fmt ".", LOC_Arg(expr->loc)));
                   }
+                  rhs.as.function_literal.signature = expr->as.definition.var.type;
                   expr->as.definition.rhs = expr_copy(&rhs);
                 }),
                 ({ return_defer(false); }));
@@ -537,10 +513,18 @@ bool parser_compile_return(Parser *p, Expr *expr) {
   expr->kind = EK_Return;
   expr_remove_type(expr);
   Expr ret = {0};
-  if (!parser_compile_expr(p, &ret))
-    return serror_causedf(p, "Failed to compile return value needed by `return` at " LOC_Fmt ".", LOC_Arg(expr->loc));
-  ;
-  expr->as.return_.value = expr_copy(&ret);
+  ParserState ps = parser_save(p);
+  if (parser_compile_expr(p, &ret)) expr->as.return_.value = expr_copy(&ret);
+  else {
+    parser_restore(p, ps);
+    Token t = {0};
+    LexerState s = lexer_save(p->l);
+    if (!lexer_get_and_expect(p->l, &t, TK_CHAR(';')))
+      return parser__fwd_lex_errorf(
+          p, "Failed to compile return statement. Must provide return value or `;`. needed by `return` at " LOC_Fmt ".",
+          LOC_Arg(expr->loc));
+    lexer_restore(p->l, s); // unconsume to allow caller to fully handle semi-colon.
+  }
   return true;
 }
 
@@ -573,7 +557,7 @@ bool parser_compile_assignment(Parser *p, Expr *expr) {
         sv_extend_to_endof(&expr->text, rhs.text);
         expr->as.assignment = (ExprAssignment){
             .lhs = lhs,
-            .op = t.kind,
+            .op = t,
             .rhs = expr_copy(&rhs),
         };
         return true;
@@ -619,7 +603,7 @@ bool parser_compile_binop(Parser *p, size_t precedence, Expr *expr) {
                             token_kind_to_str(t.kind), LOC_Arg(t.loc));
     expr->as.binop = (ExprBinOp){
         .lhs = expr_copy(expr),
-        .op = t.kind,
+        .op = t,
         .rhs = expr_copy(&rhs),
     };
     expr->kind = EK_BinOp;
@@ -699,7 +683,7 @@ bool parser_compile_primary_expr(Parser *p, Expr *expr) {
     Expr arg = {0};
     if (!parser_compile_primary_expr(p, &arg))
       return serror_causedf(p, "Couldn't compile arg for unary op `%c` at " LOC_Fmt ".", t.kind.kind, LOC_Arg(t.loc));
-    expr->as.unaryop.op = t.kind;
+    expr->as.unaryop.op = t;
     expr->as.unaryop.arg = expr_copy(&arg);
     sv_extend_to_endof(&expr->text, arg.text);
     return true;
@@ -772,7 +756,7 @@ void parser_restore(Parser *p, ParserState s) {
 
 void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
   StringBuilder sb = {0};
-  if (expr_is_typed(e)) typedef_to_str(dict, span_ptr(dict, e->type.base), &sb);
+  if (expr_is_typed(e)) typedef_to_str_from_ref(dict, e->type.base, &sb);
   printf("[" LOC_Fmt "]\t%zu:%*s[%-15.*s %s]%s: ", LOC_Arg(e->loc), level, (int)level * 4, "", (int)sb.size, sb.data,
          e->type.not_assignable ? "rval" : "lval", expr_kind_to_str(e->kind));
   switch (e->kind) {
@@ -800,7 +784,7 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
   } break;
   case EK_Assignment: {
     printf("apply assignment: %s `%s` %s\n", expr_kind_to_str(e->as.assignment.lhs->kind),
-           token_kind_to_str(e->as.assignment.op), expr_kind_to_str(e->as.assignment.rhs->kind));
+           token_kind_to_str(e->as.assignment.op.kind), expr_kind_to_str(e->as.assignment.rhs->kind));
     debug_expr(dict, e->as.assignment.lhs, level + 1);
     debug_expr(dict, e->as.assignment.rhs, level + 1);
   } break;
@@ -812,7 +796,7 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
     debug_expr(dict, e->as.ternary.iffalse, level + 1);
   } break;
   case EK_BinOp: {
-    printf("apply binop: %s `%s` %s\n", expr_kind_to_str(e->as.binop.lhs->kind), token_kind_to_str(e->as.binop.op),
+    printf("apply binop: %s `%s` %s\n", expr_kind_to_str(e->as.binop.lhs->kind), token_kind_to_str(e->as.binop.op.kind),
            expr_kind_to_str(e->as.binop.rhs->kind));
     debug_expr(dict, e->as.binop.lhs, level + 1);
     debug_expr(dict, e->as.binop.rhs, level + 1);
@@ -828,7 +812,8 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
     da_for_each(Expr, index, e->as.index.indices) { debug_expr(dict, index, level + 1); }
   } break;
   case EK_UnaryOp: {
-    printf("apply unary: `%s` %s\n", token_kind_to_str(e->as.unaryop.op), expr_kind_to_str(e->as.unaryop.arg->kind));
+    printf("apply unary: `%s` %s\n", token_kind_to_str(e->as.unaryop.op.kind),
+           expr_kind_to_str(e->as.unaryop.arg->kind));
     debug_expr(dict, e->as.unaryop.arg, level + 1);
   } break;
   case EK_Variable: {
@@ -860,14 +845,14 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
   } break;
   case EK_FunctionLiteral: {
     sb_clear(&sb);
-    typedef_to_str(dict, span_ptr(dict, e->as.function_literal.signature), &sb);
+    typedef_to_str_from_ref(dict, e->as.function_literal.signature, &sb);
     printf(" [signature=" SB_Fmt "] [body: %zu exprs]:\n", SB_Arg(sb), e->as.function_literal.body.exprs.size);
     span_for_each(Expr, be, e->as.function_literal.body.exprs) { debug_expr(dict, be, level + 1); }
   } break;
   // statements
   case EK_Definition: {
     sb_clear(&sb);
-    typedef_to_str(dict, span_ptr(dict, e->as.definition.var.type), &sb);
+    typedef_to_str_from_ref(dict, e->as.definition.var.type, &sb);
     printf(SV_Fmt " [type=" SB_Fmt "]", SV_Arg(e->as.definition.var.name), SB_Arg(sb));
     if (e->as.definition.rhs) {
       printf(" = %s\n", expr_kind_to_str(e->as.definition.rhs->kind));
@@ -876,7 +861,7 @@ void debug_expr(TypeDefs *dict, Expr *e, size_t level) {
   } break;
   case EK_Return: {
     sb_clear(&sb);
-    typedef_to_str(dict, span_ptr(dict, e->as.return_.value->type.base), &sb);
+    typedef_to_str_from_ref(dict, e->as.return_.value->type.base, &sb);
     printf(" [type=" SB_Fmt "]", SB_Arg(sb));
     printf(" = %s\n", expr_kind_to_str(e->as.return_.value->kind));
     debug_expr(dict, e->as.return_.value, level + 1);
