@@ -17,6 +17,7 @@ typedef struct TypeCheckOpt {
   bool has_expected;
   TypeRef expected;
   Type *same_as;
+  TypeRef *assignable_to;
   bool require_assignable;
   bool require_unassignable;
   bool require_boolish;
@@ -145,10 +146,56 @@ bool program_typecheck_expr_opt(Program *prog, Expr *expr, TypeCheckOpt opt) {
     return_defer(true);
   } break;
   case EK_FuncCall: {
-
+    if (!program_typecheck_expr(prog, expr->as.funcall.func))
+      return_defer(serror_causedf(prog, "Failed typecheck for function in funcall."));
+    TypeDef *func_type = span_ptr(&prog->types, expr->as.funcall.func->type.base);
+    static StringBuilder ft_str = {0};
+    sb_clear(&ft_str);
+    typedef_to_str(&prog->types, func_type, &ft_str);
+    if (func_type->kind != Type_Func) {
+      return_defer(serror_locf(
+          prog, expr->loc, "Failed typecheck: funcall receiver is not a function (got=" SB_Fmt ").", SB_Arg(ft_str)));
+    }
+    if (expr->as.funcall.params.size != func_type->as.func_signature.params.size) {
+      return_defer(serror_locf(
+          prog, expr->loc, "Typecheck failed for funcall on {" SB_Fmt "}. Expected %zu params but got %zu passed in.",
+          SB_Arg(ft_str), func_type->as.func_signature.params.size, expr->as.funcall.params.size));
+    }
+    for (size_t i = 0; i < func_type->as.func_signature.params.size; i++) {
+      if (!program_typecheck_expr(prog, span_ptr(&expr->as.funcall.params, i),
+                                  .assignable_to = &span_ptr(&func_type->as.func_signature.params, i)->type))
+        return_defer(
+            serror_causedf(prog, "Failed typecheck for param %zu in funcall for " SB_Fmt ".", i, SB_Arg(ft_str)));
+    }
+    expr->type.base = func_type->as.func_signature.ret;
+    expr->type.not_assignable = true;
+    return_defer(true);
   } break;
   case EK_Index: {
-
+    if (!program_typecheck_expr(prog, expr->as.index.ptr))
+      return_defer(serror_causedf(prog, "Failed typecheck for ptr in index expression."));
+    TypeDef *ptr_type = span_ptr(&prog->types, expr->as.index.ptr->type.base);
+    static StringBuilder pt_str = {0};
+    sb_clear(&pt_str);
+    typedef_to_str(&prog->types, ptr_type, &pt_str);
+    if (ptr_type->kind != Type_Array) {
+      return_defer(serror_locf(prog, expr->loc, "Failed typecheck: index receiver is not an array (got=" SB_Fmt ").",
+                               SB_Arg(pt_str)));
+    }
+    if (expr->as.index.indices.size != ptr_type->as.array.dims.size) {
+      return_defer(serror_locf(
+          prog, expr->loc, "Typecheck failed for index on {" SB_Fmt "}. Expected %zu indices but got %zu passed in.",
+          SB_Arg(pt_str), ptr_type->as.array.dims.size, expr->as.index.indices.size));
+    }
+    TypeRef index_type = typedefs_find_by_name(&prog->types, sv_from_cstr("u64"));
+    for (size_t i = 0; i < ptr_type->as.array.dims.size; i++) {
+      if (!program_typecheck_expr(prog, span_ptr(&expr->as.index.indices, i), .assignable_to = &index_type))
+        return_defer(
+            serror_causedf(prog, "Failed typecheck for param %zu in funcall for " SB_Fmt ".", i, SB_Arg(pt_str)));
+    }
+    expr->type.base = ptr_type->as.array.of;
+    expr->type.not_assignable = true;
+    return_defer(true);
   } break;
   case EK_UnaryOp: {
     if (!program_typecheck_expr(prog, expr->as.unaryop.arg))
@@ -289,6 +336,16 @@ defer:
   static StringBuilder errors = {0};
   StringBuilder *sb = &errors;
   sb_clear(sb);
+  // CHECK: assignable
+  if (opt.assignable_to) {
+    if (!program_typecheck_verify_assignable(prog, *opt.assignable_to, expr->type.base)) {
+      sb_appendf(sb, "Expression type is not assignable. (got=");
+      typedef_to_str_from_ref(&prog->types, expr->type.base, sb);
+      sb_appendf(sb, ", want=");
+      typedef_to_str_from_ref(&prog->types, *opt.assignable_to, sb);
+      sb_appendf(sb, "). ");
+    }
+  }
   // CHECK: expr->type matches `same_as`
   if (opt.same_as) {
     opt.has_expected = true;

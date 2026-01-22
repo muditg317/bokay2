@@ -642,12 +642,88 @@ bool parser_compile_postfix_expr(Parser *p, Expr *expr) {
 bool parser_compile_funcall(Parser *p, Expr func, Expr *expr) {
   expr->kind = EK_FuncCall;
   expr->as.funcall.func = expr_copy(&func);
+  expr->as.funcall.params = (Exprs){0};
   Expr param = {0};
   TokenKind delim = TK_CHAR(',');
   parser_compile_until(p, &delim, TK_CHAR(')'), ({ return false; }), (parser_compile_expr(p, &param)), ({
                          da_push(&expr->as.funcall.params, param);
                          sv_extend_to_endof(&expr->text, param.text);
                        }), );
+  // do {
+  //   LexerState __s_650__ = lexer_save(p->l);
+  //   Token __t_650__ = {0};
+  //   if (!lexer_expect_token(p->l, &__t_650__)) (({ return 0; }));
+  //   if (token_is(__t_650__, (((TokenKind){.kind = (TokenBaseKind)(')')})))) {
+  //     tools_log_opt(TOOLS_DEBUG,
+  //                   ((ToolsLogOpts){.file = "/home/muditg317/workspace/bokay2/parser.h",
+  //                                   .line = 650,
+  //                                   .debug_label = "compile_list"}),
+  //                   ("thing is empty at "
+  //                    "%s:%zu:%-4zu"),
+  //                   (__t_650__.loc).filepath, (__t_650__.loc).line, (__t_650__.loc).column);
+  //     ({ break; });
+  //   } else lexer_restore(p->l, __s_650__);
+  //   tools_log_opt(TOOLS_DEBUG,
+  //                 ((ToolsLogOpts){
+  //                     .file = "/home/muditg317/workspace/bokay2/parser.h", .line = 650, .debug_label =
+  //                     "compile_list"}),
+  //                 ("check list"));
+  //   _Bool __done_650__ = 0;
+  //   while (!__done_650__ && ((parser_compile_expr_opt((p), (&param), (CompileExprOpts){})))) {
+  //     (({
+  //       (({
+  //          do {
+  //            size_t new_cap = ((&expr->as.funcall.params)->size + 1);
+  //            if (((&expr->as.funcall.params))->capacity < new_cap) {
+  //              ((&expr->as.funcall.params))->capacity =
+  //                  ((&expr->as.funcall.params))->capacity <= 0 ? 8 : ((&expr->as.funcall.params))->capacity;
+  //              while (((&expr->as.funcall.params))->capacity < new_cap) { ((&expr->as.funcall.params))->capacity *=
+  //              2; }
+  //              ((&expr->as.funcall.params))->data =
+  //                  realloc((((&expr->as.funcall.params))->data),
+  //                          (((&expr->as.funcall.params))->capacity * sizeof(*((&expr->as.funcall.params))->data)));
+  //              ((((&expr->as.funcall.params))->data && "get good")
+  //                   ? (void)(0)
+  //                   : __assert_fail("((&expr->as.funcall.params))->data && \"get good\"",
+  //                                   "/home/muditg317/workspace/bokay2/parser.h", 650,
+  //                                   __extension__ __PRETTY_FUNCTION__));
+  //            }
+  //          } while (0);
+  //        }),
+  //        (&expr->as.funcall.params)->data[(&expr->as.funcall.params)->size++] = (param));
+  //       ((&expr->text)->size =
+  //            &((&(param.text))
+  //                  ->data[((((&(param.text))->size > 0) ? (void)(0)
+  //                                                       : __assert_fail("(&(param.text))->size > 0",
+  //                                                                       "/home/muditg317/workspace/bokay2/parser.h",
+  //                                                                       650, __extension__ __PRETTY_FUNCTION__)),
+  //                          (&(param.text))->size - 1)]) -
+  //            (&expr->text)->data);
+  //     }));
+  //     if ((&delim) != NULL) {
+  //       if (!lexer_get_and_expect_oneof(
+  //               (p->l), (&__t_650__),
+  //               (((TokenKind[2]){*(TokenKind *)(&delim), (((TokenKind){.kind = (TokenBaseKind)(')')}))})),
+  //               (sizeof((((TokenKind[2]){*(TokenKind *)(&delim), (((TokenKind){.kind = (TokenBaseKind)(')')}))}))) /
+  //                sizeof(
+  //                    ((((TokenKind[2]){*(TokenKind *)(&delim), (((TokenKind){.kind =
+  //                    (TokenBaseKind)(')')}))})))[0]))))
+  //         (({ return 0; }));
+  //       if (token_is(__t_650__, (((TokenKind){.kind = (TokenBaseKind)(')')})))) break;
+  //       else continue;
+  //     } else {
+  //       do {
+  //         LexerState __s_650__ = lexer_save(((p->l)));
+  //         Token __t_650__ = {0};
+  //         if (!lexer_get_token(((p->l)), &__t_650__)) (({ return 0; }));
+  //         if (token_is_oneof(__t_650__, ((((TokenKind[1]){(((TokenKind){.kind = (TokenBaseKind)(')')}))}))), (1))) {
+  //           (((__done_650__ = 1)));
+  //         } else lexer_restore(((p->l)), __s_650__);
+  //       } while (0);
+  //     }
+  //   }
+  // } while (0);
+
   return true;
 }
 bool parser_compile_index(Parser *p, Expr ptr, Expr *expr) {

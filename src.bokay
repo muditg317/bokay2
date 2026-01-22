@@ -23,3 +23,13 @@ bar: mut func(a:u8) => bool {
 bar = func(a:u8) => bool {
   return a < 10;
 }
+
+a: bool = bar(foo);
+
+type b = bool;
+
+b: mut b;
+
+b = func() => bool {
+  return false;
+}()
